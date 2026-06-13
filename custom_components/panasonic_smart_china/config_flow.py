@@ -18,7 +18,7 @@ from homeassistant.helpers.selector import (
     SelectSelectorMode,
 )
 
-from .api import PanasonicApiClient, PanasonicApiError
+from .api import PanasonicApiAuthError, PanasonicApiClient, PanasonicApiError
 from .const import (
     CONF_CATEGORY,
     CONF_CONTROLLER_MODEL,
@@ -287,6 +287,19 @@ class PanasonicOptionsFlow(config_entries.OptionsFlow):
                 data[CONF_FAMILY_ID],
                 data[CONF_REAL_FAMILY_ID],
             )
+        except PanasonicApiAuthError as err:
+            _LOGGER.warning("Panasonic session expired during device rescan: %s", err)
+            self.hass.async_create_task(
+                self.hass.config_entries.flow.async_init(
+                    DOMAIN,
+                    context={
+                        "source": config_entries.SOURCE_REAUTH,
+                        "entry_id": self._config_entry.entry_id,
+                    },
+                    data=self._config_entry.data,
+                )
+            )
+            errors["base"] = "session_expired"
         except PanasonicApiError as err:
             _LOGGER.error("Device rescan failed: %s", err)
             errors["base"] = "cannot_connect"

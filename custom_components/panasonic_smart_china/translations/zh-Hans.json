@@ -56,7 +56,8 @@
       }
     },
     "error": {
-      "cannot_connect": "重新扫描失败：请检查账号会话或网络连接"
+      "cannot_connect": "重新扫描失败：请检查账号会话或网络连接",
+      "session_expired": "松下账号会话已失效，已发起重新登录请求。请返回设备与服务页面完成重新认证。"
     },
     "abort": {
       "no_devices_found": "当前账号下没有已配置设备"
