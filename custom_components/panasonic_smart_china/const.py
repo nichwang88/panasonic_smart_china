@@ -4,11 +4,18 @@ from .profiles.ducted_ac_0900 import FAN_MAX, FAN_MIN, FAN_MUTE
 DOMAIN = "panasonic_smart_china"
 
 CONF_USR_ID = "usrId"
+CONF_USERNAME = "username"
 CONF_DEVICE_ID = "deviceId"
 CONF_TOKEN = "token"
 CONF_SSID = "SSID"
 CONF_SENSOR_ID = "sensor_entity_id"
 CONF_CONTROLLER_MODEL = "controller_model"
+CONF_FAMILY_ID = "familyId"
+CONF_REAL_FAMILY_ID = "realFamilyId"
+CONF_DEVICES = "devices"
+CONF_DEVICE_NAME = "deviceName"
+CONF_CATEGORY = "category"
+CONF_ENABLED = "enabled"
 
 # 第一阶段只注册已验证的 0900 风管机 profile。其他品类待后续 profile/adapter
 # 扩展层稳定后再接入。

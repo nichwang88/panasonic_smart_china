@@ -15,12 +15,22 @@ from homeassistant.const import (
 )
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.device_registry import DeviceInfo
 
 from .api import PanasonicApiAuthError, PanasonicApiClient, PanasonicApiError
 from .const import (
-    CONF_USR_ID, CONF_DEVICE_ID, CONF_TOKEN, CONF_SSID, 
-    CONF_SENSOR_ID, CONF_CONTROLLER_MODEL, 
-    SUPPORTED_CONTROLLERS, FAN_MUTE
+    CONF_CONTROLLER_MODEL,
+    CONF_DEVICE_ID,
+    CONF_DEVICE_NAME,
+    CONF_DEVICES,
+    CONF_ENABLED,
+    CONF_SENSOR_ID,
+    CONF_SSID,
+    CONF_TOKEN,
+    CONF_USR_ID,
+    DOMAIN,
+    SUPPORTED_CONTROLLERS,
+    FAN_MUTE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -40,22 +50,43 @@ def _as_int(value, default=None):
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    """根据控制器的 device_type 创建对应的实体子类"""
-    config = entry.data
-    model = config.get(CONF_CONTROLLER_MODEL, "CZ-RD501DW2")
-    profile = SUPPORTED_CONTROLLERS.get(model)
-    if not profile:
-        _LOGGER.error("Controller model %s not found, using default.", model)
-        profile = list(SUPPORTED_CONTROLLERS.values())[0]
+    """Create climate entities for all enabled devices under an account entry."""
+    runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+    client = runtime.get("client") or PanasonicApiClient(hass, entry.data.get(CONF_SSID))
+    devices = entry.data.get(CONF_DEVICES, {})
 
-    dev_type = profile.get("device_type", "AC")
+    entities = []
+    for device_id, device_config in devices.items():
+        if not device_config.get(CONF_ENABLED, True):
+            continue
 
-    if dev_type != "AC":
-        _LOGGER.error("Unsupported device type %s for controller model %s", dev_type, model)
-        return
+        model = device_config.get(CONF_CONTROLLER_MODEL, "CZ-RD501DW2")
+        profile = SUPPORTED_CONTROLLERS.get(model)
+        if not profile:
+            _LOGGER.error("Controller model %s not found for %s.", model, device_id)
+            continue
 
-    entity = PanasonicACEntity(hass, config, entry.title, profile)
-    async_add_entities([entity], update_before_add=True)
+        if profile.get("device_type", "AC") != "AC":
+            _LOGGER.error("Unsupported device type for controller model %s", model)
+            continue
+
+        entity_config = {
+            **entry.data,
+            **device_config,
+            CONF_DEVICE_ID: device_id,
+        }
+        entities.append(
+            PanasonicACEntity(
+                hass,
+                entry,
+                entity_config,
+                device_config.get(CONF_DEVICE_NAME, device_id),
+                profile,
+                client,
+            )
+        )
+
+    async_add_entities(entities, update_before_add=True)
 
 
 # ============================================================
@@ -64,15 +95,15 @@ async def async_setup_entry(hass, entry, async_add_entities):
 class PanasonicBaseEntity(ClimateEntity):
     """松下设备基类 — 包含轮询、状态获取、命令发送等通用逻辑"""
 
-    def __init__(self, hass, config, name, profile):
+    def __init__(self, hass, entry, config, name, profile, client):
         self._hass = hass
+        self._entry = entry
         self._usr_id = config[CONF_USR_ID]
         self._device_id = config[CONF_DEVICE_ID]
         self._token = config[CONF_TOKEN]
-        self._ssid = config[CONF_SSID]
-        self._api = PanasonicApiClient(hass, self._ssid)
+        self._api = client
         self._attr_name = name
-        self._attr_unique_id = f"panasonic_{self._device_id}"
+        self._attr_unique_id = f"panasonic_smart_china_{self._device_id}_climate"
 
         # 控制器配置
         self._profile = profile
@@ -100,6 +131,15 @@ class PanasonicBaseEntity(ClimateEntity):
     @property
     def available(self):
         return self._available
+
+    @property
+    def device_info(self):
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._device_id)},
+            name=self._attr_name,
+            manufacturer="Panasonic",
+            via_device=(DOMAIN, self._usr_id),
+        )
 
     async def async_added_to_hass(self):
         await super().async_added_to_hass()
@@ -186,16 +226,12 @@ class PanasonicBaseEntity(ClimateEntity):
         if latest_params:
             current_params = latest_params.copy()
         else:
-            if not self._last_params:
-                _LOGGER.warning(
-                    "Could not fetch latest status for %s and no cached params exist; "
-                    "aborting command %s.",
-                    self._device_id,
-                    changes,
-                )
-                return
-            _LOGGER.warning("Could not fetch latest status for %s, using cached params.", self._device_id)
-            current_params = self._last_params.copy()
+            _LOGGER.warning(
+                "Could not fetch latest status for %s; aborting command %s.",
+                self._device_id,
+                changes,
+            )
+            return
 
         # 2. Build payload (委托给子类)
         params = self._build_send_payload(changes, current_params)
@@ -262,8 +298,8 @@ class PanasonicBaseEntity(ClimateEntity):
 class PanasonicACEntity(PanasonicBaseEntity):
     """松下空调实体 — 支持温度设置、风速控制"""
 
-    def __init__(self, hass, config, name, profile):
-        super().__init__(hass, config, name, profile)
+    def __init__(self, hass, entry, config, name, profile, client):
+        super().__init__(hass, entry, config, name, profile, client)
         self._sensor_id = config.get(CONF_SENSOR_ID)
         self._fan_map = profile.get("fan_mapping", {})
         self._fan_overrides = profile.get("fan_payload_overrides", {})

@@ -3,32 +3,63 @@
     "step": {
       "user": {
         "title": "登录松下账号",
-        "description": "请输入您的松下智能家电 App (中国版) 账号密码。\n首次登录会自动保存会话，添加后续设备时无需再次输入。",
+        "description": "请输入松下智能家电 App（中国版）的账号密码。插件会以账号为粒度添加设备。",
         "data": {
           "username": "手机号",
           "password": "密码"
         }
       },
-      "device": {
-        "title": "配置设备",
-        "description": "成功获取设备列表！请选择要添加的设备及对应的控制器型号。\n标有 ⛔ 的设备暂不支持，无法添加。",
+      "devices": {
+        "title": "选择设备",
+        "description": "请选择要在 Home Assistant 中启用的松下设备。当前仅显示已支持的 0900 风管机设备。",
         "data": {
-          "deviceId": "选择设备",
-          "controller_model": "控制器/线控器型号",
-          "sensor_entity_id": "关联室温传感器 (可选)"
+          "devices": "启用设备"
+        }
+      },
+      "reauth_confirm": {
+        "title": "重新登录松下账号",
+        "description": "松下账号会话已失效，请重新输入密码。",
+        "data": {
+          "password": "密码"
         }
       }
     },
     "error": {
       "cannot_connect": "登录失败：请检查账号密码或网络连接",
-      "no_devices_found": "未找到设备：请确保账号下已绑定设备",
-      "token_generation_failed": "Token 生成失败：设备 ID 格式不正确",
-      "device_not_supported": "该设备暂不支持，请选择其他设备",
-      "all_devices_configured": "所有设备均已添加，无需重复配置"
+      "no_devices_selected": "请至少选择一个设备"
     },
     "abort": {
-      "already_configured": "该设备已配置",
+      "already_configured": "该松下账号已配置",
+      "no_devices_found": "未找到设备：请确保账号下已绑定设备",
+      "no_supported_devices_found": "未找到当前支持的设备",
       "reauth_successful": "重新认证成功"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "设备设置",
+        "data": {
+          "deviceId": "选择设备"
+        }
+      },
+      "rescan": {
+        "title": "重新扫描设备",
+        "description": "使用当前松下账号会话重新获取设备列表。若会话已失效，请先重新认证。"
+      },
+      "edit_device": {
+        "title": "编辑设备",
+        "data": {
+          "enabled": "启用设备",
+          "sensor_entity_id": "关联室温传感器（可选）"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "重新扫描失败：请检查账号会话或网络连接"
+    },
+    "abort": {
+      "no_devices_found": "当前账号下没有已配置设备"
     }
   },
   "entity": {
