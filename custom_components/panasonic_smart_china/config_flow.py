@@ -1,24 +1,20 @@
 import logging
-import hashlib
 import voluptuous as vol
-import aiohttp
 
 from homeassistant import config_entries
 from homeassistant.helpers.selector import EntitySelector, EntitySelectorConfig
 from homeassistant.const import CONF_USERNAME, CONF_PASSWORD
 
+from .api import PanasonicApiClient, PanasonicApiError
 from .const import (
     DOMAIN, CONF_USR_ID, CONF_DEVICE_ID, CONF_TOKEN, 
     CONF_SSID, CONF_SENSOR_ID, CONF_CONTROLLER_MODEL,
     SUPPORTED_CONTROLLERS,
     find_controllers_for_category, extract_category_from_device_id
 )
+from .token import DeviceTokenError, generate_device_token
 
 _LOGGER = logging.getLogger(__name__)
-
-URL_LOGIN = "https://app.psmartcloud.com/App/UsrLogin"
-URL_GET_DEV = "https://app.psmartcloud.com/App/UsrGetBindDevInfo"
-URL_GET_TOKEN = "https://app.psmartcloud.com/App/UsrGetToken"
 
 class PanasonicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
@@ -140,7 +136,10 @@ class PanasonicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 dev_info = self._devices.get(selected_dev_id)
                 dev_name = dev_info.get("deviceName", "Panasonic Device")
-                
+
+                await self.async_set_unique_id(f"panasonic_{selected_dev_id}")
+                self._abort_if_unique_id_configured()
+
                 token = self._generate_token(selected_dev_id)
                 if not token:
                     errors["base"] = "token_generation_failed"
@@ -183,81 +182,35 @@ class PanasonicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def _get_devices_with_ssid(self, usr_id, ssid):
         """仅使用 SSID 尝试获取设备列表 (用于验证 Session)"""
-        headers = {'User-Agent': 'SmartApp', 'Content-Type': 'application/json', 'Cookie': f"SSID={ssid}"}
-        
         domain_data = self.hass.data.get(DOMAIN, {})
         session_cache = domain_data.get("session")
         
-        if not session_cache or 'familyId' not in session_cache:
+        if (
+            not session_cache
+            or not session_cache.get('familyId')
+            or not session_cache.get('realFamilyId')
+        ):
             return None
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(URL_GET_DEV, json={
-                    "id": 3, "uiVersion": 4.0,
-                    "params": {
-                        "realFamilyId": session_cache['realFamilyId'], 
-                        "familyId": session_cache['familyId'], 
-                        "usrId": usr_id
-                    }
-                }, headers=headers, ssl=False) as resp:
-                    if resp.status != 200: return None
-                    dev_res = await resp.json()
-                    if 'results' not in dev_res: return None
-                    
-                    devices = {}
-                    for dev in dev_res['results']['devList']:
-                        devices[dev['deviceId']] = dev['params']
-                    return devices
-        except:
+            client = PanasonicApiClient(self.hass, ssid)
+            return await client.get_devices(
+                usr_id,
+                session_cache['familyId'],
+                session_cache['realFamilyId'],
+            )
+        except PanasonicApiError:
             return None
 
     async def _authenticate_full_flow(self, username, password):
         """完整的登录流程"""
-        headers = {'User-Agent': 'SmartApp', 'Content-Type': 'application/json'}
-        async with aiohttp.ClientSession() as session:
-            # 1. GetToken
-            async with session.post(URL_GET_TOKEN, json={
-                "id": 1, "uiVersion": 4.0, "params": {"usrId": username}
-            }, headers=headers, ssl=False) as resp:
-                data = await resp.json()
-                if 'results' not in data: raise Exception("GetToken Failed")
-                token_start = data['results']['token']
-            
-            # 2. Calc Password
-            pwd_md5 = hashlib.md5(password.encode()).hexdigest().upper()
-            inter_md5 = hashlib.md5((pwd_md5 + username).encode()).hexdigest().upper()
-            final_token = hashlib.md5((inter_md5 + token_start).encode()).hexdigest().upper()
-            
-            # 3. Login
-            async with session.post(URL_LOGIN, json={
-                "id": 2, "uiVersion": 4.0, 
-                "params": {"telId": "00:00:00:00:00:00", "checkFailCount": 0, "usrId": username, "pwd": final_token}
-            }, headers=headers, ssl=False) as resp:
-                login_res = await resp.json()
-                if "results" not in login_res: raise Exception("Login Failed")
-                
-                res = login_res['results']
-                real_usr_id = res['usrId']
-                ssid = res['ssId']
-                
-                self._temp_login_info = {
-                    'realFamilyId': res['realFamilyId'],
-                    'familyId': res['familyId']
-                }
-
-            # 4. Get Devices
-            headers['Cookie'] = f"SSID={ssid}"
-            async with session.post(URL_GET_DEV, json={
-                "id": 3, "uiVersion": 4.0,
-                "params": {"realFamilyId": res['realFamilyId'], "familyId": res['familyId'], "usrId": real_usr_id}
-            }, headers=headers, ssl=False) as resp:
-                dev_res = await resp.json()
-                devices = {}
-                if 'results' in dev_res and 'devList' in dev_res['results']:
-                    for dev in dev_res['results']['devList']:
-                        devices[dev['deviceId']] = dev['params']
-                return real_usr_id, ssid, devices
+        client = PanasonicApiClient(self.hass)
+        login = await client.authenticate(username, password)
+        self._temp_login_info = {
+            'realFamilyId': login.real_family_id,
+            'familyId': login.family_id,
+        }
+        return login.usr_id, login.ssid, login.devices
 
     def _generate_token(self, device_id):
         """
@@ -267,24 +220,7 @@ class PanasonicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         使用 split('_', 2) 安全分割，兼容后缀中可能包含下划线的设备 ID
         """
         try:
-            did = device_id.upper()
-            
-            parts = did.split('_', 2)
-            if len(parts) < 3:
-                _LOGGER.error("Invalid deviceId format: %s (expected MAC_CATEGORY_SUFFIX)", device_id)
-                return None
-            
-            mac_part = parts[0]
-            category = parts[1]
-            suffix = parts[2]
-            
-            if len(mac_part) < 6:
-                _LOGGER.error("Invalid MAC part in deviceId: %s", device_id)
-                return None
-            
-            stoken = mac_part[6:] + '_' + category + '_' + mac_part[:6]
-            inner = hashlib.sha512(stoken.encode()).hexdigest()
-            return hashlib.sha512((inner + '_' + suffix).encode()).hexdigest()
-        except Exception as e:
+            return generate_device_token(device_id)
+        except DeviceTokenError as e:
             _LOGGER.error("Token generation failed for deviceId %s: %s", device_id, e)
             return None

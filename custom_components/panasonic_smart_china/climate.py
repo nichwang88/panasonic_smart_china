@@ -1,5 +1,4 @@
 import logging
-import async_timeout
 from datetime import timedelta
 
 from homeassistant.components.climate import ClimateEntity
@@ -14,23 +13,30 @@ from homeassistant.const import (
     STATE_UNKNOWN,
     UnitOfTemperature,
 )
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.event import async_track_time_interval
 
+from .api import PanasonicApiAuthError, PanasonicApiClient, PanasonicApiError
 from .const import (
     CONF_USR_ID, CONF_DEVICE_ID, CONF_TOKEN, CONF_SSID, 
     CONF_SENSOR_ID, CONF_CONTROLLER_MODEL, 
-    SUPPORTED_CONTROLLERS, FAN_MUTE, FAN_MIN, FAN_MAX
+    SUPPORTED_CONTROLLERS, FAN_MUTE
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-URL_GET = "https://app.psmartcloud.com/App/ACDevGetStatusInfoAW"
-URL_SET_AC = "https://app.psmartcloud.com/App/ACDevSetStatusInfoAW"
-URL_SET_HEATER = "https://app.psmartcloud.com/App/ADevSetStatusInfoFV54BA1C"
-
 # === 轮询频率 ===
 POLLING_INTERVAL = timedelta(seconds=15)
+
+
+def _as_int(value, default=None):
+    """Best-effort int conversion for Panasonic status fields."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -44,12 +50,12 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
     dev_type = profile.get("device_type", "AC")
 
-    if dev_type == "Heater":
-        entity = PanasonicHeaterEntity(hass, config, entry.title, profile)
-    else:
-        entity = PanasonicACEntity(hass, config, entry.title, profile)
+    if dev_type != "AC":
+        _LOGGER.error("Unsupported device type %s for controller model %s", dev_type, model)
+        return
 
-    async_add_entities([entity])
+    entity = PanasonicACEntity(hass, config, entry.title, profile)
+    async_add_entities([entity], update_before_add=True)
 
 
 # ============================================================
@@ -64,6 +70,7 @@ class PanasonicBaseEntity(ClimateEntity):
         self._device_id = config[CONF_DEVICE_ID]
         self._token = config[CONF_TOKEN]
         self._ssid = config[CONF_SSID]
+        self._api = PanasonicApiClient(hass, self._ssid)
         self._attr_name = name
         self._attr_unique_id = f"panasonic_{self._device_id}"
 
@@ -71,11 +78,14 @@ class PanasonicBaseEntity(ClimateEntity):
         self._profile = profile
         self._temp_scale = profile.get("temp_scale", 2)
         self._hvac_map = profile.get("hvac_mapping", {})
+        self._default_hvac_mode = profile.get("default_hvac_mode", HVACMode.COOL)
 
         # 内部状态
+        self._available = False
         self._is_on = False
-        self._hvac_mode = HVACMode.OFF
+        self._hvac_mode = self._default_hvac_mode
         self._target_temperature = 26.0
+        self._last_active_target_temperature = self._target_temperature
         self._last_params = {}
 
         # 定时器句柄
@@ -86,6 +96,10 @@ class PanasonicBaseEntity(ClimateEntity):
     @property
     def should_poll(self):
         return False
+
+    @property
+    def available(self):
+        return self._available
 
     async def async_added_to_hass(self):
         await super().async_added_to_hass()
@@ -144,34 +158,22 @@ class PanasonicBaseEntity(ClimateEntity):
 
     async def _fetch_status(self, update_internal_state=True):
         """通用方法：获取设备当前最新状态"""
-        headers = self._get_headers()
-        payload = {
-            "id": 100, "usrId": self._usr_id,
-            "deviceId": self._device_id, "token": self._token
-        }
-
         try:
-            session = async_get_clientsession(self._hass)
-            async with async_timeout.timeout(5):
-                response = await session.post(URL_GET, json=payload, headers=headers, ssl=False)
-                json_data = await response.json()
-
-                if json_data.get('errorCode') in ['3003', '3004']:
-                    _LOGGER.error("SSID expired.")
-                    return None
-
-                if 'results' in json_data and 'runStatus' in json_data['results']:
-                    res = json_data['results']
-                    self._last_params = res
-
-                    if update_internal_state:
-                        self._update_local_state(res)
-
-                    return res
-        except Exception as e:
-            _LOGGER.debug("Fetch status failed: %s", e)
+            res = await self._api.get_ac_status(self._usr_id, self._device_id, self._token)
+            self._last_params = res.copy()
+            if update_internal_state:
+                self._available = True
+                self._update_local_state(res)
+            return res
+        except PanasonicApiAuthError as err:
+            self._available = False
+            _LOGGER.error("Panasonic session expired for %s: %s", self._device_id, err)
+            raise ConfigEntryAuthFailed("Panasonic Smart China session expired") from err
+        except PanasonicApiError as err:
+            if update_internal_state:
+                self._available = False
+            _LOGGER.debug("Fetch status failed for %s: %s", self._device_id, err)
             return None
-        return None
 
     # --- 命令发送 ---
 
@@ -184,43 +186,38 @@ class PanasonicBaseEntity(ClimateEntity):
         if latest_params:
             current_params = latest_params.copy()
         else:
-            _LOGGER.warning("Could not fetch latest status, using cached params.")
+            if not self._last_params:
+                _LOGGER.warning(
+                    "Could not fetch latest status for %s and no cached params exist; "
+                    "aborting command %s.",
+                    self._device_id,
+                    changes,
+                )
+                return
+            _LOGGER.warning("Could not fetch latest status for %s, using cached params.", self._device_id)
             current_params = self._last_params.copy()
 
         # 2. Build payload (委托给子类)
-        url, params, req_id = self._build_send_payload(changes, current_params)
+        params = self._build_send_payload(changes, current_params)
 
         # 3. Write
-        headers = self._get_headers()
         try:
-            session = async_get_clientsession(self._hass)
-            async with async_timeout.timeout(10):
-                await session.post(url, json={
-                    "id": req_id, "usrId": self._usr_id,
-                    "deviceId": self._device_id,
-                    "token": self._token, "params": params
-                }, headers=headers, ssl=False)
+            await self._api.set_ac_status(self._usr_id, self._device_id, self._token, params)
+        except PanasonicApiAuthError as err:
+            self._available = False
+            _LOGGER.error("Panasonic session expired while setting %s: %s", self._device_id, err)
+            raise ConfigEntryAuthFailed("Panasonic Smart China session expired") from err
+        except PanasonicApiError as err:
+            _LOGGER.error("Set failed for %s: %s", self._device_id, err)
+            return
 
-                # 4. 更新本地状态 (乐观更新)
-                self._update_local_state(params)
-                self._last_params.update(params)
+        # 4. 仅在服务端接受指令后更新本地状态
+        self._available = True
+        self._last_params.update(params)
+        self._update_local_state(self._last_params)
 
-                # 5. 强制通知 HA 刷新界面
-                self.async_write_ha_state()
-
-        except Exception as e:
-            _LOGGER.error("Set failed: %s", e)
-
-    def _get_headers(self):
-        """基础 HTTP Headers，子类可覆盖扩展"""
-        return {
-            'Content-Type': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X)',
-            'xtoken': f'SSID={self._ssid}',
-            'DNT': '1',
-            'Origin': 'https://app.psmartcloud.com',
-            'X-Requested-With': 'XMLHttpRequest'
-        }
+        # 5. 强制通知 HA 刷新界面
+        self.async_write_ha_state()
 
     # --- 子类必须实现的方法 ---
 
@@ -229,7 +226,7 @@ class PanasonicBaseEntity(ClimateEntity):
         raise NotImplementedError
 
     def _build_send_payload(self, changes, current_params):
-        """构建发送的 payload -> (url, params_dict, request_id)"""
+        """构建发送的 payload -> params_dict"""
         raise NotImplementedError
 
     def _build_hvac_command(self, hvac_mode):
@@ -306,18 +303,24 @@ class PanasonicACEntity(PanasonicBaseEntity):
         return None
 
     def _update_local_state(self, res):
-        self._is_on = (res.get('runStatus') == 1)
+        self._is_on = (_as_int(res.get('runStatus')) == 1)
 
-        p_mode = res.get('runMode')
+        p_mode = _as_int(res.get('runMode'))
         for ha_mode, pm in self._hvac_map.items():
             if pm == p_mode:
                 self._hvac_mode = ha_mode
                 break
 
-        self._target_temperature = res.get('setTemperature', 52) / self._temp_scale
+        raw_temp = _as_int(res.get('setTemperature'))
+        if raw_temp is not None:
+            target = raw_temp / self._temp_scale
+            if self.min_temp <= target <= self.max_temp:
+                self._target_temperature = target
+                if self._is_on:
+                    self._last_active_target_temperature = target
 
-        p_wind = res.get('windSet')
-        p_mute = res.get('muteMode')
+        p_wind = _as_int(res.get('windSet'))
+        p_mute = _as_int(res.get('muteMode'))
 
         if p_wind == 10 and p_mute == 1:
             self._fan_mode = FAN_MUTE
@@ -332,11 +335,20 @@ class PanasonicACEntity(PanasonicBaseEntity):
                 self._fan_mode = FAN_AUTO
 
     def _build_hvac_command(self, hvac_mode):
-        p_mode = self._hvac_map.get(hvac_mode, 3)
-        return {"runStatus": 1, "runMode": p_mode}
+        p_mode = self._hvac_map.get(hvac_mode, self._hvac_map[self._default_hvac_mode])
+        return {
+            "runStatus": 1,
+            "runMode": p_mode,
+            "setTemperature": int(self._last_active_target_temperature * self._temp_scale),
+        }
 
     def _build_on_command(self):
-        return {"runStatus": 1}
+        hvac_mode = self._hvac_mode if self._hvac_mode != HVACMode.OFF else self._default_hvac_mode
+        return {
+            "runStatus": 1,
+            "runMode": self._hvac_map.get(hvac_mode, self._hvac_map[self._default_hvac_mode]),
+            "setTemperature": int(self._last_active_target_temperature * self._temp_scale),
+        }
 
     def _build_off_command(self):
         return {"runStatus": 0}
@@ -345,124 +357,31 @@ class PanasonicACEntity(PanasonicBaseEntity):
         """空调：Read-Modify-Write + safe_keys 过滤"""
         current_params.update(changes)
 
-        safe_keys = [
-            "runMode", "forceRunning", "runStatus", "remoteForbidMode", "remoteMode",
-            "setTemperature", "setHumidity", "windSet", "exchangeWindSet",
-            "portraitWindSet", "orientationWindSet", "nanoeG", "nanoe", "ecoMode",
-            "muteMode", "filterReset", "powerful", "powerfulMode", "thermoMode", "buzzer",
-            "autoRunMode", "unusualPresent", "runForbidden", "inhaleTemperature",
-            "outsideTemperature", "insideHumidity", "alarmCode", "nanoeModule", "TDWindModule"
-        ]
+        safe_keys = self._profile.get("safe_status_keys", set())
         params = {k: v for k, v in current_params.items() if k in safe_keys}
 
-        return (URL_SET_AC, params, 200)
+        return params
 
     async def async_set_temperature(self, **kwargs):
         temp = kwargs.get(ATTR_TEMPERATURE)
         if temp is None:
             return
+        if not self._is_on:
+            _LOGGER.info(
+                "Ignoring target temperature %.1f for %s while device is off.",
+                temp,
+                self._device_id,
+            )
+            return
         await self._send_command({"setTemperature": int(temp * self._temp_scale)})
 
     async def async_set_fan_mode(self, fan_mode):
-        changes = {}
         if fan_mode == FAN_MUTE:
-            changes = {"windSet": 10, "muteMode": 1}
+            changes = self._fan_overrides.get(FAN_MUTE, {"windSet": 10, "muteMode": 1})
         else:
-            val = self._fan_map.get(fan_mode, 10)
+            val = self._fan_map.get(fan_mode)
+            if val is None:
+                _LOGGER.warning("Unsupported fan mode %s for %s", fan_mode, self._device_id)
+                return
             changes = {"windSet": val, "muteMode": 0}
         await self._send_command(changes)
-
-
-# ============================================================
-# 浴霸子类 (Heater)
-# ============================================================
-class PanasonicHeaterEntity(PanasonicBaseEntity):
-    """松下浴霸实体 — 模式控制（取暖/换气/凉干燥/热干燥）"""
-
-    @property
-    def supported_features(self):
-        return (
-            ClimateEntityFeature.TARGET_TEMPERATURE |
-            ClimateEntityFeature.TURN_ON |
-            ClimateEntityFeature.TURN_OFF
-        )
-
-    @property
-    def fan_modes(self):
-        return []
-
-    @property
-    def current_temperature(self):
-        """浴霸无外部传感器，返回目标温度"""
-        return self._target_temperature
-
-    def _update_local_state(self, res):
-        """浴霸使用 runningMode 单字段控制"""
-        mode_val = res.get('runningMode', 32)
-        self._is_on = (str(mode_val) not in ['32', '0'])
-
-        current_mode_val = int(mode_val) if mode_val is not None else 32
-        found_mode = False
-        for ha_mode, pm in self._hvac_map.items():
-            if pm == current_mode_val:
-                self._hvac_mode = ha_mode
-                found_mode = True
-                break
-
-        if not self._is_on:
-            self._hvac_mode = HVACMode.OFF
-
-        raw_temp = res.get('setTemperature') or res.get('warmTempset') or 52
-        self._target_temperature = raw_temp / self._temp_scale
-
-    def _build_hvac_command(self, hvac_mode):
-        """浴霸通过 runningMode 切换模式"""
-        target_val = self._hvac_map.get(hvac_mode, 32)
-        return {"runningMode": target_val}
-
-    def _build_on_command(self):
-        """默认以换气模式开机"""
-        return {"runningMode": 38}
-
-    def _build_off_command(self):
-        """runningMode=32 为待机（关机）"""
-        return {"runningMode": 32}
-
-    def _build_send_payload(self, changes, current_params):
-        """浴霸：固定模板 + 覆盖，不使用 Read-Modify-Write"""
-        params = {
-            "runningMode": 32,
-            "warmTempset": 255, "windDirectionSet": 255, "windKindSet": 255,
-            "timeSet": 255, "lightSet": 255,
-            "DIYnextRunningMode": 255, "DIYnextWarmTempset": 255,
-            "DIYnextwindDirectionSet": 255, "DIYnextwindKindSet": 255,
-            "DIYnextTimeSet": 255, "DIYnextStepNo": 2
-        }
-        params.update(changes)
-
-        # 取暖(37)和换气(38)模式自动设置定时
-        mode = params.get("runningMode")
-        if mode in [37, 38]:
-            params["timeSet"] = 3
-        else:
-            params["timeSet"] = 255
-
-        return (URL_SET_HEATER, params, 52)
-
-    def _get_headers(self):
-        """浴霸需要额外的 Cookie 和 Referer 头"""
-        headers = super()._get_headers()
-        headers['Cookie'] = f'SSID={self._ssid}'
-        headers['Referer'] = (
-            f"https://app.psmartcloud.com/ca/cn/0820/RB20VL1/index.html"
-            f"?deviceId={self._device_id}&devType=FV-RB20VL1"
-        )
-        return headers
-
-    async def async_set_temperature(self, **kwargs):
-        """浴霸不支持温度设置"""
-        pass
-
-    async def async_set_fan_mode(self, fan_mode):
-        """浴霸不支持风速设置"""
-        pass

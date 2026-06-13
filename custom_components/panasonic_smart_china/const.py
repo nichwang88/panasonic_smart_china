@@ -1,10 +1,5 @@
-from homeassistant.components.climate.const import (
-    HVACMode,
-    FAN_AUTO,
-    FAN_LOW,
-    FAN_MEDIUM,
-    FAN_HIGH,
-)
+from .profiles import SUPPORTED_PROFILES, find_profiles_for_category
+from .profiles.ducted_ac_0900 import FAN_MAX, FAN_MIN, FAN_MUTE
 
 DOMAIN = "panasonic_smart_china"
 
@@ -15,63 +10,19 @@ CONF_SSID = "SSID"
 CONF_SENSOR_ID = "sensor_entity_id"
 CONF_CONTROLLER_MODEL = "controller_model"
 
-# 自定义风速常量
-FAN_MIN = "Min"    # 最低
-FAN_MAX = "Max"    # 最高
-FAN_MUTE = "Quiet" # 静音
-
-# === 控制器配置数据库 ===
+# 第一阶段只注册已验证的 0900 风管机 profile。其他品类待后续 profile/adapter
+# 扩展层稳定后再接入。
 SUPPORTED_CONTROLLERS = {
-    "CZ-RD501DW2": {
-        "name": "松下风管机线控器 (CZ-RD501DW2)",
-        "device_type": "AC",
-        "category_ids": ["0900"],  # 空调类别码
-        "temp_scale": 2,
-        "hvac_mapping": {
-            HVACMode.COOL: 3,
-            HVACMode.HEAT: 4,
-            HVACMode.DRY: 2,
-            HVACMode.AUTO: 0,
-        },
-        # 基础风速映射 (windSet 数值)
-        "fan_mapping": {
-            FAN_AUTO: 10,   # 自动
-            FAN_MIN: 3,     # 最低
-            FAN_LOW: 4,     # 低
-            FAN_MEDIUM: 5,  # 中
-            FAN_HIGH: 6,    # 高
-            FAN_MAX: 7,     # 最高
-        },
-        # 特殊模式覆盖 (仅定义静音即可，其他走通用逻辑)
-        "fan_payload_overrides": {
-            FAN_MUTE: {"windSet": 10, "muteMode": 1}
-        }
-    },
-    "FV-RB20VL1": {
-        "name": "松下浴霸 (FV-RB20VL1)",
-        "device_type": "Heater",
-        "category_ids": ["0820"],  # 浴霸类别码
-        "temp_scale": 1,
-        "hvac_mapping": {
-            HVACMode.OFF: 32,       # 待机
-            HVACMode.HEAT: 37,      # 取暖
-            HVACMode.FAN_ONLY: 38,  # 换气
-            HVACMode.COOL: 40,      # 凉干燥
-            HVACMode.DRY: 42,       # 热干燥
-        },
-        "fan_mapping": {},
-        "fan_payload_overrides": {}
-    }
+    "CZ-RD501DW2": SUPPORTED_PROFILES["ducted_ac_0900"],
 }
 
 
 def find_controllers_for_category(category_id):
     """根据设备 ID 中的 category_id 查找匹配的控制器列表"""
-    matches = {}
-    for key, profile in SUPPORTED_CONTROLLERS.items():
-        if category_id in profile.get("category_ids", []):
-            matches[key] = profile
-    return matches
+    profiles = find_profiles_for_category(category_id)
+    return {
+        "CZ-RD501DW2": profiles["ducted_ac_0900"]
+    } if "ducted_ac_0900" in profiles else {}
 
 
 def extract_category_from_device_id(device_id):
