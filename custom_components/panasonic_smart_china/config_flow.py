@@ -243,12 +243,12 @@ class PanasonicOptionsFlow(config_entries.OptionsFlow):
     """Options flow for account-level device settings."""
 
     def __init__(self, config_entry) -> None:
-        self.config_entry = config_entry
+        self._config_entry = config_entry
         self._selected_device_id: str | None = None
 
     async def async_step_init(self, user_input=None):
         """Select a configured device to edit."""
-        devices = self.config_entry.data.get(CONF_DEVICES, {})
+        devices = self._config_entry.data.get(CONF_DEVICES, {})
         if not devices:
             return self.async_abort(reason="no_devices_found")
 
@@ -277,7 +277,7 @@ class PanasonicOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_rescan(self, user_input=None):
         """Refresh account devices using the current account session."""
-        data = self.config_entry.data
+        data = self._config_entry.data
         devices = dict(data.get(CONF_DEVICES, {}))
         errors = {}
 
@@ -323,8 +323,8 @@ class PanasonicOptionsFlow(config_entries.OptionsFlow):
 
             new_data = dict(data)
             new_data[CONF_DEVICES] = devices
-            self.hass.config_entries.async_update_entry(self.config_entry, data=new_data)
-            await self.hass.config_entries.async_reload(self.config_entry.entry_id)
+            self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
+            await self.hass.config_entries.async_reload(self._config_entry.entry_id)
             _LOGGER.info("Device rescan completed, added %s new supported devices.", added)
             return self.async_create_entry(title="", data={})
 
@@ -336,7 +336,7 @@ class PanasonicOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_edit_device(self, user_input=None):
         """Edit a single device under the account entry."""
-        devices = dict(self.config_entry.data.get(CONF_DEVICES, {}))
+        devices = dict(self._config_entry.data.get(CONF_DEVICES, {}))
         current = dict(devices[self._selected_device_id])
 
         if user_input is not None:
@@ -344,10 +344,10 @@ class PanasonicOptionsFlow(config_entries.OptionsFlow):
             current[CONF_ENABLED] = user_input[CONF_ENABLED]
             devices[self._selected_device_id] = current
 
-            new_data = dict(self.config_entry.data)
+            new_data = dict(self._config_entry.data)
             new_data[CONF_DEVICES] = devices
-            self.hass.config_entries.async_update_entry(self.config_entry, data=new_data)
-            await self.hass.config_entries.async_reload(self.config_entry.entry_id)
+            self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
+            await self.hass.config_entries.async_reload(self._config_entry.entry_id)
             return self.async_create_entry(title="", data={})
 
         return self.async_show_form(
