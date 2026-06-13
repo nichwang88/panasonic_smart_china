@@ -19,6 +19,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 
 from .api import PanasonicApiAuthError, PanasonicApiClient, PanasonicApiError
 from .const import (
+    CONF_CATEGORY,
     CONF_CONTROLLER_MODEL,
     CONF_DEVICE_ID,
     CONF_DEVICE_MODEL,
@@ -29,10 +30,16 @@ from .const import (
     CONF_SSID,
     CONF_TOKEN,
     CONF_USR_ID,
+    CONF_PROFILE_ID,
     DOMAIN,
-    SUPPORTED_CONTROLLERS,
     FAN_MUTE,
 )
+from .models import (
+    ENTITY_KIND_BATHROOM_HEATER,
+    ENTITY_KIND_DUCTED_AC,
+    PLATFORM_CLIMATE,
+)
+from .profiles import find_profile_for_device_config
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,7 +58,7 @@ def _as_int(value, default=None):
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    """Create climate entities for all enabled devices under an account entry."""
+    """Create climate entities for enabled devices under an account entry."""
     runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
     client = runtime.get("client") or PanasonicApiClient(hass, entry.data.get(CONF_SSID))
     devices = entry.data.get(CONF_DEVICES, {})
@@ -61,14 +68,25 @@ async def async_setup_entry(hass, entry, async_add_entities):
         if not device_config.get(CONF_ENABLED, True):
             continue
 
-        model = device_config.get(CONF_CONTROLLER_MODEL, "CZ-RD501DW2")
-        profile = SUPPORTED_CONTROLLERS.get(model)
+        profile = find_profile_for_device_config(
+            profile_id=device_config.get(CONF_PROFILE_ID),
+            controller_model=device_config.get(CONF_CONTROLLER_MODEL),
+            category_id=device_config.get(CONF_CATEGORY),
+        )
         if not profile:
-            _LOGGER.error("Controller model %s not found for %s.", model, device_id)
+            _LOGGER.error("Device profile not found for %s.", device_id)
             continue
 
-        if profile.get("device_type", "AC") != "AC":
-            _LOGGER.error("Unsupported device type for controller model %s", model)
+        if PLATFORM_CLIMATE not in profile.ha_platforms:
+            continue
+
+        entity_class = CLIMATE_ENTITY_CLASSES.get(profile.entity_kind)
+        if not entity_class:
+            _LOGGER.error(
+                "Climate entity kind %s not implemented for %s.",
+                profile.entity_kind,
+                device_id,
+            )
             continue
 
         entity_config = {
@@ -77,7 +95,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
             CONF_DEVICE_ID: device_id,
         }
         entities.append(
-            PanasonicACEntity(
+            entity_class(
                 hass,
                 entry,
                 entity_config,
@@ -109,9 +127,9 @@ class PanasonicBaseEntity(ClimateEntity):
 
         # 控制器配置
         self._profile = profile
-        self._temp_scale = profile.get("temp_scale", 2)
-        self._hvac_map = profile.get("hvac_mapping", {})
-        self._default_hvac_mode = profile.get("default_hvac_mode", HVACMode.COOL)
+        self._temp_scale = profile.temp_scale
+        self._hvac_map = profile.hvac_mapping
+        self._default_hvac_mode = profile.default_hvac_mode or HVACMode.COOL
 
         # 内部状态
         self._available = False
@@ -202,7 +220,12 @@ class PanasonicBaseEntity(ClimateEntity):
     async def _fetch_status(self, update_internal_state=True):
         """通用方法：获取设备当前最新状态"""
         try:
-            res = await self._api.get_ac_status(self._usr_id, self._device_id, self._token)
+            res = await self._api.get_device_status(
+                self._profile,
+                self._usr_id,
+                self._device_id,
+                self._token,
+            )
             self._last_params = res.copy()
             if update_internal_state:
                 self._available = True
@@ -241,7 +264,13 @@ class PanasonicBaseEntity(ClimateEntity):
 
         # 3. Write
         try:
-            await self._api.set_ac_status(self._usr_id, self._device_id, self._token, params)
+            await self._api.set_device_status(
+                self._profile,
+                self._usr_id,
+                self._device_id,
+                self._token,
+                params,
+            )
         except PanasonicApiAuthError as err:
             self._available = False
             _LOGGER.error("Panasonic session expired while setting %s: %s", self._device_id, err)
@@ -285,8 +314,11 @@ class PanasonicBaseEntity(ClimateEntity):
     async def async_set_hvac_mode(self, hvac_mode):
         if hvac_mode == HVACMode.OFF:
             await self._send_command(self._build_off_command())
-        else:
-            await self._send_command(self._build_hvac_command(hvac_mode))
+            return
+        if hvac_mode not in self._hvac_map:
+            _LOGGER.warning("Unsupported HVAC mode %s for %s", hvac_mode, self._device_id)
+            return
+        await self._send_command(self._build_hvac_command(hvac_mode))
 
     async def async_turn_on(self):
         await self._send_command(self._build_on_command())
@@ -304,8 +336,8 @@ class PanasonicACEntity(PanasonicBaseEntity):
     def __init__(self, hass, entry, config, name, profile, client):
         super().__init__(hass, entry, config, name, profile, client)
         self._sensor_id = config.get(CONF_SENSOR_ID)
-        self._fan_map = profile.get("fan_mapping", {})
-        self._fan_overrides = profile.get("fan_payload_overrides", {})
+        self._fan_map = profile.fan_mapping
+        self._fan_overrides = profile.fan_payload_overrides
         self._fan_mode = FAN_AUTO
 
     @property
@@ -396,7 +428,7 @@ class PanasonicACEntity(PanasonicBaseEntity):
         """空调：Read-Modify-Write + safe_keys 过滤"""
         current_params.update(changes)
 
-        safe_keys = self._profile.get("safe_status_keys", set())
+        safe_keys = self._profile.safe_status_keys
         params = {k: v for k, v in current_params.items() if k in safe_keys}
 
         return params
@@ -424,3 +456,77 @@ class PanasonicACEntity(PanasonicBaseEntity):
                 return
             changes = {"windSet": val, "muteMode": 0}
         await self._send_command(changes)
+
+
+class PanasonicBathroomHeaterEntity(PanasonicBaseEntity):
+    """松下风暖浴霸实体，支持取暖、换气和干燥模式控制。"""
+
+    @property
+    def supported_features(self):
+        return ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
+
+    @property
+    def current_temperature(self):
+        return None
+
+    @property
+    def target_temperature(self):
+        return None
+
+    def _update_local_state(self, res):
+        mode_value = _as_int(res.get("runningMode"), 32)
+        self._is_on = mode_value not in (0, 32)
+
+        for ha_mode, panasonic_mode in self._hvac_map.items():
+            if panasonic_mode == mode_value:
+                self._hvac_mode = ha_mode
+                break
+
+        if not self._is_on:
+            self._hvac_mode = HVACMode.OFF
+
+    def _build_hvac_command(self, hvac_mode):
+        return {
+            "runningMode": self._hvac_map.get(
+                hvac_mode,
+                self._hvac_map[self._default_hvac_mode],
+            )
+        }
+
+    def _build_on_command(self):
+        mode = self._hvac_mode if self._hvac_mode != HVACMode.OFF else self._default_hvac_mode
+        return {
+            "runningMode": self._hvac_map.get(
+                mode,
+                self._hvac_map[self._default_hvac_mode],
+            )
+        }
+
+    def _build_off_command(self):
+        return {"runningMode": 32}
+
+    def _build_send_payload(self, changes, current_params):
+        """Build the fixed FV-RB20VL1 control payload."""
+        params = {
+            "runningMode": 32,
+            "warmTempset": 255,
+            "windDirectionSet": 255,
+            "windKindSet": 255,
+            "timeSet": 255,
+            "lightSet": 255,
+            "DIYnextRunningMode": 255,
+            "DIYnextWarmTempset": 255,
+            "DIYnextwindDirectionSet": 255,
+            "DIYnextwindKindSet": 255,
+            "DIYnextTimeSet": 255,
+            "DIYnextStepNo": 2,
+        }
+        params.update(changes)
+        params["timeSet"] = 3 if params["runningMode"] in (37, 38) else 255
+        return params
+
+
+CLIMATE_ENTITY_CLASSES = {
+    ENTITY_KIND_DUCTED_AC: PanasonicACEntity,
+    ENTITY_KIND_BATHROOM_HEATER: PanasonicBathroomHeaterEntity,
+}

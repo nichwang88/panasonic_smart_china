@@ -27,7 +27,10 @@ from .const import (
     CONF_DEVICE_NAME,
     CONF_DEVICES,
     CONF_ENABLED,
+    CONF_ENTITY_KIND,
     CONF_FAMILY_ID,
+    CONF_HA_PLATFORMS,
+    CONF_PROFILE_ID,
     CONF_REAL_FAMILY_ID,
     CONF_SENSOR_ID,
     CONF_SSID,
@@ -37,7 +40,9 @@ from .const import (
     DOMAIN,
     extract_category_from_device_id,
     find_controllers_for_category,
+    find_controllers_for_device,
 )
+from .models import ENTITY_KIND_DUCTED_AC
 from .token import DeviceTokenError, generate_device_token
 
 _LOGGER = logging.getLogger(__name__)
@@ -111,9 +116,15 @@ class PanasonicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Select supported devices to enable under this account."""
         errors = {}
         supported_devices = self._supported_devices()
+        unsupported_devices = self._unsupported_device_summary()
 
         if not supported_devices:
-            return self.async_abort(reason="no_supported_devices_found")
+            return self.async_abort(
+                reason="no_supported_devices_found",
+                description_placeholders={
+                    "unsupported_devices": unsupported_devices,
+                },
+            )
 
         if user_input is not None:
             selected_device_ids = user_input.get(CONF_DEVICES, [])
@@ -141,7 +152,7 @@ class PanasonicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "value": device_id,
                 "label": _format_device_label(
                     info.get("deviceName", "Unknown"),
-                    _extract_device_model(info, None),
+                    self._device_support_map.get(device_id, {}).get("model"),
                     device_id,
                 ),
             }
@@ -165,6 +176,9 @@ class PanasonicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors,
+            description_placeholders={
+                "unsupported_devices": unsupported_devices,
+            },
         )
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]):
@@ -203,13 +217,28 @@ class PanasonicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def _analyze_device_support(self) -> None:
         self._device_support_map = {}
-        for device_id in self._devices:
+        for device_id, device_info in self._devices.items():
             category = extract_category_from_device_id(device_id)
-            matching = find_controllers_for_category(category)
+            category_matches = find_controllers_for_category(category)
+            matching = find_controllers_for_device(
+                category,
+                _extract_device_model_values(device_info, device_id),
+            )
+            if matching:
+                unsupported_reason = None
+            elif category_matches:
+                unsupported_reason = "unsupported_model"
+            else:
+                unsupported_reason = "unsupported_category"
             self._device_support_map[device_id] = {
                 "supported": bool(matching),
                 "category": category,
+                "model": _extract_device_model(
+                    device_info,
+                    _extract_device_id_suffix(device_id),
+                ),
                 "matching_controllers": matching,
+                "unsupported_reason": unsupported_reason,
             }
 
     def _supported_devices(self) -> dict[str, dict[str, Any]]:
@@ -219,6 +248,27 @@ class PanasonicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if self._device_support_map.get(device_id, {}).get("supported")
         }
 
+    def _unsupported_device_summary(self) -> str:
+        """Return a readable summary of devices filtered from the setup flow."""
+        lines = []
+        reason_labels = {
+            "unsupported_category": "设备类别暂不支持",
+            "unsupported_model": "设备型号暂不支持",
+        }
+        for device_id, device_info in self._devices.items():
+            support_info = self._device_support_map.get(device_id, {})
+            if support_info.get("supported"):
+                continue
+            name = device_info.get("deviceName", "Unknown")
+            category = support_info.get("category") or "未识别"
+            model = support_info.get("model") or "未识别"
+            reason = reason_labels.get(
+                support_info.get("unsupported_reason"),
+                "设备暂不支持",
+            )
+            lines.append(f"- {name}：类别 {category}，型号 {model}，{reason}")
+        return "\n".join(lines) if lines else "无"
+
     def _build_configured_devices(self, selected_device_ids: list[str]) -> dict[str, dict[str, Any]]:
         configured = {}
         for device_id in selected_device_ids:
@@ -227,9 +277,9 @@ class PanasonicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not matching:
                 continue
 
-            controller_model = list(matching.keys())[0]
+            profile = next(iter(matching.values()))
             dev_info = self._devices.get(device_id, {})
-            device_model = _extract_device_model(dev_info, controller_model)
+            device_model = _extract_device_model(dev_info, profile.controller_model)
             try:
                 token = generate_device_token(device_id)
             except DeviceTokenError as err:
@@ -240,7 +290,10 @@ class PanasonicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_DEVICE_NAME: dev_info.get("deviceName", "Panasonic Device"),
                 CONF_DEVICE_MODEL: device_model,
                 CONF_CATEGORY: support_info.get("category"),
-                CONF_CONTROLLER_MODEL: controller_model,
+                CONF_CONTROLLER_MODEL: profile.controller_model,
+                CONF_PROFILE_ID: profile.profile_id,
+                CONF_HA_PLATFORMS: list(profile.ha_platforms),
+                CONF_ENTITY_KIND: profile.entity_kind,
                 CONF_TOKEN: token,
                 CONF_SENSOR_ID: None,
                 CONF_ENABLED: True,
@@ -330,16 +383,36 @@ class PanasonicOptionsFlow(config_entries.OptionsFlow):
                         "deviceName",
                         devices[device_id].get(CONF_DEVICE_NAME, device_id),
                     )
+                    category = devices[device_id].get(CONF_CATEGORY) or extract_category_from_device_id(
+                        device_id
+                    )
+                    matching = find_controllers_for_device(
+                        category,
+                        _extract_device_model_values(device_info, device_id),
+                    )
+                    profile = next(iter(matching.values()), None)
                     devices[device_id][CONF_DEVICE_MODEL] = _extract_device_model(
                         device_info,
-                        devices[device_id].get(CONF_CONTROLLER_MODEL),
+                        profile.controller_model
+                        if profile
+                        else devices[device_id].get(CONF_CONTROLLER_MODEL),
                     )
+                    if profile:
+                        devices[device_id][CONF_CATEGORY] = category
+                        devices[device_id][CONF_CONTROLLER_MODEL] = profile.controller_model
+                        devices[device_id][CONF_PROFILE_ID] = profile.profile_id
+                        devices[device_id][CONF_HA_PLATFORMS] = list(profile.ha_platforms)
+                        devices[device_id][CONF_ENTITY_KIND] = profile.entity_kind
                     continue
 
                 category = extract_category_from_device_id(device_id)
-                matching = find_controllers_for_category(category)
+                matching = find_controllers_for_device(
+                    category,
+                    _extract_device_model_values(device_info, device_id),
+                )
                 if not matching:
                     continue
+                profile = next(iter(matching.values()))
 
                 try:
                     token = generate_device_token(device_id)
@@ -349,9 +422,15 @@ class PanasonicOptionsFlow(config_entries.OptionsFlow):
 
                 devices[device_id] = {
                     CONF_DEVICE_NAME: device_info.get("deviceName", "Panasonic Device"),
-                    CONF_DEVICE_MODEL: _extract_device_model(device_info, list(matching.keys())[0]),
+                    CONF_DEVICE_MODEL: _extract_device_model(
+                        device_info,
+                        profile.controller_model,
+                    ),
                     CONF_CATEGORY: category,
-                    CONF_CONTROLLER_MODEL: list(matching.keys())[0],
+                    CONF_CONTROLLER_MODEL: profile.controller_model,
+                    CONF_PROFILE_ID: profile.profile_id,
+                    CONF_HA_PLATFORMS: list(profile.ha_platforms),
+                    CONF_ENTITY_KIND: profile.entity_kind,
                     CONF_TOKEN: token,
                     CONF_SENSOR_ID: None,
                     CONF_ENABLED: True,
@@ -377,7 +456,8 @@ class PanasonicOptionsFlow(config_entries.OptionsFlow):
         current = dict(devices[self._selected_device_id])
 
         if user_input is not None:
-            current[CONF_SENSOR_ID] = user_input.get(CONF_SENSOR_ID)
+            if current.get(CONF_ENTITY_KIND) == ENTITY_KIND_DUCTED_AC:
+                current[CONF_SENSOR_ID] = user_input.get(CONF_SENSOR_ID)
             current[CONF_ENABLED] = user_input[CONF_ENABLED]
             devices[self._selected_device_id] = current
 
@@ -387,6 +467,19 @@ class PanasonicOptionsFlow(config_entries.OptionsFlow):
             await self.hass.config_entries.async_reload(self._config_entry.entry_id)
             return self.async_create_entry(title="", data={})
 
+        schema = {
+            vol.Required(CONF_ENABLED, default=current.get(CONF_ENABLED, True)): bool,
+        }
+        if current.get(CONF_ENTITY_KIND) == ENTITY_KIND_DUCTED_AC:
+            schema[
+                vol.Optional(
+                    CONF_SENSOR_ID,
+                    default=current.get(CONF_SENSOR_ID),
+                )
+            ] = EntitySelector(
+                EntitySelectorConfig(domain="sensor", device_class="temperature")
+            )
+
         return self.async_show_form(
             step_id="edit_device",
             description_placeholders={
@@ -394,17 +487,7 @@ class PanasonicOptionsFlow(config_entries.OptionsFlow):
                 or current.get(CONF_CONTROLLER_MODEL)
                 or "Unknown",
             },
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_ENABLED, default=current.get(CONF_ENABLED, True)): bool,
-                    vol.Optional(
-                        CONF_SENSOR_ID,
-                        default=current.get(CONF_SENSOR_ID),
-                    ): EntitySelector(
-                        EntitySelectorConfig(domain="sensor", device_class="temperature")
-                    ),
-                }
-            ),
+            data_schema=vol.Schema(schema),
         )
 
 
@@ -415,6 +498,29 @@ def _extract_device_model(device_info: dict[str, Any], fallback: str | None) -> 
         if value:
             return str(value)
     return fallback
+
+
+def _extract_device_model_values(
+    device_info: dict[str, Any],
+    device_id: str | None = None,
+) -> set[str]:
+    """Return all model-like values from a Panasonic device info payload."""
+    values = set()
+    for field in MODEL_FIELD_CANDIDATES:
+        value = device_info.get(field)
+        if value:
+            values.add(str(value))
+    if device_id:
+        parts = device_id.split("_", 2)
+        if len(parts) == 3 and parts[2]:
+            values.add(parts[2])
+    return values
+
+
+def _extract_device_id_suffix(device_id: str) -> str | None:
+    """Return the model-like suffix from a Panasonic device id."""
+    parts = device_id.split("_", 2)
+    return parts[2] if len(parts) == 3 and parts[2] else None
 
 
 def _format_device_label(name: str, model: str | None, device_id: str | None = None) -> str:

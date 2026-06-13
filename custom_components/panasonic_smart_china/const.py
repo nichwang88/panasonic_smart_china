@@ -1,4 +1,8 @@
-from .profiles import SUPPORTED_PROFILES, find_profiles_for_category
+from .profiles import (
+    SUPPORTED_CONTROLLERS,
+    find_profiles_for_category,
+    find_profiles_for_device,
+)
 from .profiles.ducted_ac_0900 import FAN_MAX, FAN_MIN, FAN_MUTE
 
 DOMAIN = "panasonic_smart_china"
@@ -17,20 +21,27 @@ CONF_DEVICE_NAME = "deviceName"
 CONF_DEVICE_MODEL = "device_model"
 CONF_CATEGORY = "category"
 CONF_ENABLED = "enabled"
-
-# 第一阶段只注册已验证的 0900 风管机 profile。其他品类待后续 profile/adapter
-# 扩展层稳定后再接入。
-SUPPORTED_CONTROLLERS = {
-    "CZ-RD501DW2": SUPPORTED_PROFILES["ducted_ac_0900"],
-}
+CONF_PROFILE_ID = "profile_id"
+CONF_HA_PLATFORMS = "ha_platforms"
+CONF_ENTITY_KIND = "entity_kind"
 
 
 def find_controllers_for_category(category_id):
     """根据设备 ID 中的 category_id 查找匹配的控制器列表"""
     profiles = find_profiles_for_category(category_id)
     return {
-        "CZ-RD501DW2": profiles["ducted_ac_0900"]
-    } if "ducted_ac_0900" in profiles else {}
+        profile.controller_model: profile
+        for profile in profiles.values()
+    }
+
+
+def find_controllers_for_device(category_id, model_values=None):
+    """根据 category_id 和设备型号候选值查找匹配的控制器列表"""
+    profiles = find_profiles_for_device(category_id, model_values)
+    return {
+        profile.controller_model: profile
+        for profile in profiles.values()
+    }
 
 
 def extract_category_from_device_id(device_id):

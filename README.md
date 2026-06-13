@@ -1,23 +1,27 @@
 # Panasonic Smart China for Home Assistant
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-2.0.0-blue.svg)]()
+[![version](https://img.shields.io/badge/version-2.1.0-blue.svg)]()
 [![license](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
 这是一个用于 Home Assistant 的松下中国区智能家电自定义集成，目标是逐步维护成面向“松下智能家电”中国区设备的核心 HA 集成仓库。
 
-项目当前基于对“松下智能家电”App 通信逻辑的分析实现，非松下官方项目。目前已验证的主要设备是品类代号 `0900` 的松下风管机/中央空调线控设备，后续会通过 profile/adapter 方式扩展更多品类和设备型号。
+项目当前基于对“松下智能家电”App 通信逻辑的分析实现，非松下官方项目。目前已支持品类代号 `0900` 的松下风管机/中央空调线控设备，以及品类代号 `0820` 的 `FV-RB20VL1` 风暖浴霸。代码内部采用 profile 驱动模型，后续会通过独立 profile、协议端点和 HA entity adapter 扩展更多品类和设备型号。
 
 > 💡 特别致谢：登陆算法由arthurfsy和不知名的逆向大佬提供。
 
+> 💡 风暖浴霸 `FV-RB20VL1` 的核心控制逻辑提取自 [YUAN121300/panasonic_smart_china_Aircle](https://github.com/YUAN121300/panasonic_smart_china_Aircle)。感谢该项目作者对浴霸协议、模式映射、控制参数以及必要请求头的分析与验证。
+
 ## 当前状态
 
-2.0 版本已经切换为“账号 -> 设备”的配置模型：
+2.1 版本在账号级配置模型基础上新增了多品类 profile/adapter 扩展层，并加入风暖浴霸支持：
 
 - 在 HA 中以松下账号为配置入口。
 - 登录后自动扫描账号下可识别的设备。
 - 每个设备会在同一账号配置项下创建对应实体。
-- 目前只注册并验证了 `0900` 风管机 profile。
+- 当前已注册 `0900` 风管机和 `0820` `FV-RB20VL1` 风暖浴霸 profile。
+- profile 可以声明品类代号、型号匹配、HA 平台、实体 adapter、状态读取接口、控制接口和安全写入字段。
+- 初始化流程只允许选择已支持设备，并会列出因 category 或具体型号不受支持而被过滤的设备。
 - 设备信息会透出设备名称、厂商和型号，便于在 HA 设备页识别。
 
 ## 重要升级说明
@@ -41,6 +45,7 @@
 - 单点登录提醒：松下账号存在单点登录限制，如果手机 App 重新登录导致 HA 会话失效，集成会触发重新认证提醒。
 - Read-Modify-Write 控制：发送控制指令前先读取设备当前状态，再只修改必要字段，降低覆盖设备真实状态的风险。
 - 0900 风管机控制：支持开关机、制冷、制热、除湿、自动模式、目标温度和风速控制。
+- FV-RB20VL1 风暖浴霸控制：支持待机、取暖、换气、凉干燥和热干燥模式。
 - 静音风速映射：将松下协议中的静音开关映射为 HA 中的 `Quiet` 风速。
 - 外部温度传感器：可为 climate 实体绑定 HA 中的温度传感器，用于显示更准确的室内温度。
 - 本地品牌图：包含 HA 自定义集成可加载的本地 `brand/icon.png` 和 `brand/logo.png`。
@@ -50,6 +55,7 @@
 | 品类代号 | 设备类型 | 当前 profile | 说明 |
 | --- | --- | --- | --- |
 | `0900` | 风管机/中央空调 | `ducted_ac_0900` | 以 `CZ-RD501DW2` 线控器逻辑验证 |
+| `0820` | 风暖浴霸 | `bathroom_heater_0820_fv_rb20vl1` | 支持型号 `FV-RB20VL1`，设备 ID 后缀可能显示为 `Aircle-05-02` |
 
 其他品类和型号暂未声明支持。即使能在扫描中识别出来，也需要补充 profile/adapter 并完成真实设备验证后再开放。
 
@@ -109,13 +115,26 @@
 
 当前暂不支持外部湿度传感器。
 
+### 风暖浴霸
+
+`FV-RB20VL1` 在 HA 中映射为 climate 实体，支持取暖、换气、凉干燥、热干燥和待机模式。
+
+仪表盘配置示例见 [风暖浴霸仪表盘卡片](guides/风暖浴霸仪表盘卡片.md)。
+
 ## 开发方向
 
 后续计划围绕三个方向推进：
 
 1. 稳定 0900 风管机控制链路，持续收敛 read/write、会话失效、异常状态处理。
-2. 建立更清晰的 profile/adapter 架构，让不同品类和型号可以独立适配。
+2. 基于当前 profile 模型继续补齐不同 HA 平台的 adapter，例如 climate、sensor、switch、select、number 等。
 3. 吸收社区贡献的设备适配逻辑，逐步扩展为松下中国区 HA 集成的核心仓库。
+
+当前新增设备适配的推荐路径：
+
+1. 新建设备 profile，声明 `profile_id`、`category_ids`、可选 `model_ids`、HA 平台、实体类型、状态读取接口、控制接口和响应校验字段。
+2. 如果已有 HA 平台和实体类型可以复用，只补 profile；如果能力模型不同，再新增对应的 entity adapter。
+3. API 层只增加协议端点和 header 差异，不直接写 HA 状态映射。
+4. 配置流通过 profile 注册表自动发现可支持设备，不为单个型号写特殊分支。
 
 适配新设备时，请尽量提供：
 

@@ -10,14 +10,14 @@ import async_timeout
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .models import PanasonicEndpoint, PanasonicProfile
+
 BASE_URL = "https://app.psmartcloud.com/App"
 URL_LOGIN = f"{BASE_URL}/UsrLogin"
 URL_GET_DEV = f"{BASE_URL}/UsrGetBindDevInfo"
 URL_GET_TOKEN = f"{BASE_URL}/UsrGetToken"
-URL_GET_AC_STATUS = f"{BASE_URL}/ACDevGetStatusInfoAW"
-URL_SET_AC_STATUS = f"{BASE_URL}/ACDevSetStatusInfoAW"
 
-AUTH_ERROR_CODES = {"3003", "3004"}
+AUTH_ERROR_CODES = {"3003", "3004", "403", "4102"}
 SUCCESS_ERROR_CODES = {None, "", 0, "0", "0000"}
 
 
@@ -129,42 +129,60 @@ class PanasonicApiClient:
                 devices[device_id] = params
         return devices
 
-    async def get_ac_status(self, usr_id: str, device_id: str, token: str) -> dict[str, Any]:
-        """Fetch the latest status for a 0900 ducted AC device."""
+    async def get_device_status(
+        self,
+        profile: PanasonicProfile,
+        usr_id: str,
+        device_id: str,
+        token: str,
+    ) -> dict[str, Any]:
+        """Fetch the latest status for a supported device profile."""
+        endpoint = profile.status_endpoint
         res = await self._post(
-            URL_GET_AC_STATUS,
+            self._endpoint_url(endpoint),
             {
-                "id": 100,
+                "id": endpoint.request_id,
                 "usrId": usr_id,
                 "deviceId": device_id,
                 "token": token,
             },
-            headers=self._control_headers(),
-            require_results=True,
+            headers=self._control_headers(profile, device_id),
+            require_results=endpoint.require_results,
+            allow_non_json_response=endpoint.allow_non_json_response,
         )
 
-        results = res["results"]
+        results = res.get("results") if endpoint.require_results else res.get("results", res)
         if not isinstance(results, dict):
             raise PanasonicApiResponseError("Status response results must be an object")
-        if "runStatus" not in results:
-            raise PanasonicApiResponseError("Status response did not include runStatus")
+        missing_keys = endpoint.required_result_keys - results.keys()
+        if missing_keys:
+            raise PanasonicApiResponseError(
+                f"Status response did not include required keys: {sorted(missing_keys)}"
+            )
         return results
 
-    async def set_ac_status(
-        self, usr_id: str, device_id: str, token: str, params: dict[str, Any]
+    async def set_device_status(
+        self,
+        profile: PanasonicProfile,
+        usr_id: str,
+        device_id: str,
+        token: str,
+        params: dict[str, Any],
     ) -> dict[str, Any]:
-        """Set the latest status for a 0900 ducted AC device."""
+        """Send status/control params for a supported device profile."""
+        endpoint = profile.set_endpoint
         return await self._post(
-            URL_SET_AC_STATUS,
+            self._endpoint_url(endpoint),
             {
-                "id": 200,
+                "id": endpoint.request_id,
                 "usrId": usr_id,
                 "deviceId": device_id,
                 "token": token,
                 "params": params,
             },
-            headers=self._control_headers(),
-            require_results=False,
+            headers=self._control_headers(profile, device_id),
+            require_results=endpoint.require_results,
+            allow_non_json_response=endpoint.allow_non_json_response,
         )
 
     async def _post(
@@ -174,6 +192,7 @@ class PanasonicApiClient:
         *,
         headers: dict[str, str],
         require_results: bool,
+        allow_non_json_response: bool = False,
     ) -> dict[str, Any]:
         session = async_get_clientsession(self._hass)
         try:
@@ -189,6 +208,13 @@ class PanasonicApiClient:
                     data = await response.json()
                 except Exception as err:
                     text = await response.text()
+                    if allow_non_json_response:
+                        for auth_code in AUTH_ERROR_CODES:
+                            if auth_code in text:
+                                raise PanasonicApiAuthError(
+                                    f"Panasonic session expired (errorCode: {auth_code})"
+                                ) from err
+                        return {}
                     raise PanasonicApiResponseError(
                         f"Invalid JSON from {url}: {text[:200]}"
                     ) from err
@@ -208,12 +234,19 @@ class PanasonicApiClient:
         return data
 
     def _raise_for_business_error(self, data: dict[str, Any]) -> None:
-        error_code = data.get("errorCode")
+        nested_error = data.get("error")
+        nested_error = nested_error if isinstance(nested_error, dict) else {}
+        error_code = data.get("errorCode", nested_error.get("code"))
         if error_code in SUCCESS_ERROR_CODES:
             return
 
         error_code_text = str(error_code)
-        message = data.get("errorMessage") or data.get("msg") or "Panasonic API error"
+        message = (
+            data.get("errorMessage")
+            or data.get("msg")
+            or nested_error.get("message")
+            or "Panasonic API error"
+        )
         if error_code_text in AUTH_ERROR_CODES:
             raise PanasonicApiAuthError(f"{message} (errorCode: {error_code_text})")
         raise PanasonicApiResponseError(f"{message} (errorCode: {error_code_text})")
@@ -227,8 +260,15 @@ class PanasonicApiClient:
             headers["Cookie"] = f"SSID={self.ssid}"
         return headers
 
-    def _control_headers(self) -> dict[str, str]:
-        return {
+    def _endpoint_url(self, endpoint: PanasonicEndpoint) -> str:
+        return f"{BASE_URL}/{endpoint.path}"
+
+    def _control_headers(
+        self,
+        profile: PanasonicProfile | None = None,
+        device_id: str | None = None,
+    ) -> dict[str, str]:
+        headers = {
             "Content-Type": "application/json",
             "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X)",
             "xtoken": f"SSID={self.ssid}",
@@ -236,3 +276,14 @@ class PanasonicApiClient:
             "Origin": "https://app.psmartcloud.com",
             "X-Requested-With": "XMLHttpRequest",
         }
+        if profile and profile.cookie_required and self.ssid:
+            headers["Cookie"] = f"SSID={self.ssid}"
+        if profile and profile.referer_template:
+            headers["Referer"] = profile.referer_template.format(
+                device_id=device_id or "",
+                controller_model=profile.controller_model,
+                profile_id=profile.profile_id,
+            )
+        if profile:
+            headers.update(profile.extra_control_headers)
+        return headers

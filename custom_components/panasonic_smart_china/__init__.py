@@ -4,10 +4,11 @@ from homeassistant.core import HomeAssistant
 
 from .api import PanasonicApiClient
 from .const import CONF_SSID, DOMAIN
+from .profiles import supported_platforms
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["climate"]
+PLATFORMS = list(supported_platforms())
 
 async def async_setup(hass: HomeAssistant, config: dict):
     hass.data.setdefault(DOMAIN, {})

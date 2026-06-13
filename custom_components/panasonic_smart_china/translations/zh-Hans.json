@@ -11,7 +11,7 @@
       },
       "devices": {
         "title": "选择设备",
-        "description": "请选择要在 Home Assistant 中启用的松下设备。当前仅显示已支持的 0900 风管机设备。",
+        "description": "请选择要在 Home Assistant 中启用的松下设备。只有已注册 profile 且已映射到 HA 平台的设备可以添加。\n\n本次扫描中未支持的设备：\n{unsupported_devices}",
         "data": {
           "devices": "启用设备"
         }
@@ -31,7 +31,7 @@
     "abort": {
       "already_configured": "该松下账号已配置",
       "no_devices_found": "未找到设备：请确保账号下已绑定设备",
-      "no_supported_devices_found": "未找到当前支持的设备",
+      "no_supported_devices_found": "账号中未找到当前支持的设备。以下设备因类别或型号未支持而未添加：\n{unsupported_devices}",
       "reauth_successful": "重新认证成功"
     }
   },
