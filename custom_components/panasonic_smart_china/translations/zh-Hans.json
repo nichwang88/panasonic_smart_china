@@ -69,6 +69,11 @@
       "panasonic_ac": {
         "name": "松下空调"
       }
+    },
+    "sensor": {
+      "fridge_probe": {
+        "name": "状态探针"
+      }
     }
   }
 }

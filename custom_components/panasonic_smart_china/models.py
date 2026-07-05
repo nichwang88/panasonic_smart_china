@@ -6,12 +6,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 PLATFORM_CLIMATE = "climate"
+PLATFORM_SENSOR = "sensor"
 
 ENTITY_KIND_DUCTED_AC = "ducted_ac"
 ENTITY_KIND_BATHROOM_HEATER = "bathroom_heater"
+ENTITY_KIND_FRIDGE_PROBE = "fridge_probe"
 
 PROTOCOL_AC_STATUS = "ac_status"
 PROTOCOL_BATHROOM_HEATER = "bathroom_heater"
+PROTOCOL_FRIDGE_PROBE = "fridge_probe"
 
 TOKEN_STRATEGY_DEVICE_ID_SHA512 = "device_id_sha512"
 
