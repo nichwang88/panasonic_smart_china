@@ -6,6 +6,7 @@ from ..models import (
     ENTITY_KIND_FRIDGE_PROBE,
     PLATFORM_SENSOR,
     PROTOCOL_FRIDGE_PROBE,
+    TOKEN_STRATEGY_DEVICE_ID_SHA512_PRESERVE_SUFFIX,
     PanasonicEndpoint,
     PanasonicProfile,
 )
@@ -19,8 +20,9 @@ FRIDGE_0100_FRIDGE_43_PROFILE = PanasonicProfile(
     ha_platforms=(PLATFORM_SENSOR,),
     entity_kind=ENTITY_KIND_FRIDGE_PROBE,
     protocol=PROTOCOL_FRIDGE_PROBE,
+    token_strategy=TOKEN_STRATEGY_DEVICE_ID_SHA512_PRESERVE_SUFFIX,
     status_endpoint=PanasonicEndpoint(
-        path="ACDevGetStatusInfoAW",
+        path="FDevGetStatusInfo",
         request_id=100,
         require_results=True,
     ),

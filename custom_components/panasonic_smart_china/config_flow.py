@@ -281,7 +281,7 @@ class PanasonicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             dev_info = self._devices.get(device_id, {})
             device_model = _extract_device_model(dev_info, profile.controller_model)
             try:
-                token = generate_device_token(device_id)
+                token = generate_device_token(device_id, profile.token_strategy)
             except DeviceTokenError as err:
                 _LOGGER.error("Token generation failed for deviceId %s: %s", device_id, err)
                 continue
@@ -398,6 +398,18 @@ class PanasonicOptionsFlow(config_entries.OptionsFlow):
                         else devices[device_id].get(CONF_CONTROLLER_MODEL),
                     )
                     if profile:
+                        try:
+                            devices[device_id][CONF_TOKEN] = generate_device_token(
+                                device_id,
+                                profile.token_strategy,
+                            )
+                        except DeviceTokenError as err:
+                            _LOGGER.error(
+                                "Token generation failed for deviceId %s: %s",
+                                device_id,
+                                err,
+                            )
+                            continue
                         devices[device_id][CONF_CATEGORY] = category
                         devices[device_id][CONF_CONTROLLER_MODEL] = profile.controller_model
                         devices[device_id][CONF_PROFILE_ID] = profile.profile_id
@@ -415,7 +427,7 @@ class PanasonicOptionsFlow(config_entries.OptionsFlow):
                 profile = next(iter(matching.values()))
 
                 try:
-                    token = generate_device_token(device_id)
+                    token = generate_device_token(device_id, profile.token_strategy)
                 except DeviceTokenError as err:
                     _LOGGER.error("Token generation failed for deviceId %s: %s", device_id, err)
                     continue

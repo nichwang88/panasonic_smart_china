@@ -29,6 +29,7 @@ from .const import (
 )
 from .models import ENTITY_KIND_FRIDGE_PROBE, PLATFORM_SENSOR
 from .profiles import find_profile_for_device_config
+from .token import DeviceTokenError, generate_device_token
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -91,10 +92,13 @@ class PanasonicFridgeProbeSensor(SensorEntity):
         self._hass = hass
         self._usr_id = config[CONF_USR_ID]
         self._device_id = config[CONF_DEVICE_ID]
-        self._token = config[CONF_TOKEN]
         self._model = config.get(CONF_DEVICE_MODEL) or config.get(CONF_CONTROLLER_MODEL)
         self._api = client
         self._profile = profile
+        try:
+            self._token = generate_device_token(self._device_id, profile.token_strategy)
+        except DeviceTokenError:
+            self._token = config[CONF_TOKEN]
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
             name=name,
@@ -164,7 +168,7 @@ class PanasonicFridgeProbeSensor(SensorEntity):
             }
             raise ConfigEntryAuthFailed("Panasonic Smart China session expired") from err
         except PanasonicApiError as err:
-            self._available = False
+            self._available = True
             self._attr_native_value = "error"
             self._attr_extra_state_attributes = {
                 **base_attributes,

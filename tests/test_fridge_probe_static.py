@@ -10,7 +10,7 @@ def read(path: Path) -> str:
 
 
 def test_fridge_probe_release_metadata_is_bumped():
-    assert '"version": "2.1.1"' in read(DOMAIN / "manifest.json")
+    assert '"version": "2.1.2"' in read(DOMAIN / "manifest.json")
 
 
 def test_fridge_probe_profile_is_registered():
@@ -32,3 +32,10 @@ def test_fridge_probe_matches_category_and_model():
     profile = read(DOMAIN / "profiles" / "fridge_0100_fridge_43.py")
     assert 'category_ids=frozenset({"0100"})' in profile
     assert 'model_ids=frozenset({"Fridge-43"})' in profile
+    assert 'path="FDevGetStatusInfo"' in profile
+    assert "TOKEN_STRATEGY_DEVICE_ID_SHA512_PRESERVE_SUFFIX" in profile
+
+
+def test_fridge_probe_recomputes_token_from_profile_strategy():
+    sensor = read(DOMAIN / "sensor.py")
+    assert "generate_device_token(self._device_id, profile.token_strategy)" in sensor

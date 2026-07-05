@@ -17,6 +17,7 @@ PROTOCOL_BATHROOM_HEATER = "bathroom_heater"
 PROTOCOL_FRIDGE_PROBE = "fridge_probe"
 
 TOKEN_STRATEGY_DEVICE_ID_SHA512 = "device_id_sha512"
+TOKEN_STRATEGY_DEVICE_ID_SHA512_PRESERVE_SUFFIX = "device_id_sha512_preserve_suffix"
 
 
 @dataclass(frozen=True)
