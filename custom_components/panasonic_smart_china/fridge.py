@@ -7,7 +7,7 @@ import logging
 from typing import Any
 
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -30,6 +30,68 @@ _LOGGER = logging.getLogger(__name__)
 
 POLLING_INTERVAL = timedelta(seconds=60)
 MAX_RAW_ATTRIBUTE_CHARS = 6000
+FRIDGE_SETTING_PARAMS = (
+    "PCTempSet",
+    "PCTempCur",
+    "PCTempCurAlarm",
+    "SCS1TempSet",
+    "SCS1TempCur",
+    "SCS1TempCurAlarm",
+    "SCS2TempSet",
+    "SCS2TempCur",
+    "SCS2TempCurAlarm",
+    "SCB1TempSet",
+    "SCB1TempCur",
+    "SCB1TempCurAlarm",
+    "SCB2TempSet",
+    "SCB2TempCur",
+    "SCB2TempCurAlarm",
+    "FCTempSet",
+    "FCTempCur",
+    "FCTempCurAlarm",
+    "quickFreeze",
+    "vacation",
+    "quickicing",
+    "icingStop",
+    "icingDeice",
+    "eraseOdor",
+    "ecoNaviSet",
+    "ecoNaviCur",
+    "speed",
+    "RAModeCur",
+    "SAModeCur",
+    "bodyOperating",
+    "iceDetection",
+    "waterLack",
+    "silver",
+    "preservation",
+    "nanoe",
+    "freshFrozen",
+    "smartHumi",
+    "autoIcing",
+    "WCModeCur",
+    "forcedDeforst",
+    "sevenFresh",
+    "SCB1ModeCur",
+    "SCB2ModeCur",
+    "PCGate1",
+    "PCGate2",
+    "SCGate",
+    "SCB1Gate",
+    "SCB2Gate",
+    "FCGate1",
+    "FCGate2",
+    "ICGate",
+    "gateAlarm",
+    "ecoMode",
+    "bodyOffline",
+    "voiceOperating",
+    "SCB1NanoMode",
+    "SCB2NanoMode",
+    "PCMilkStore",
+    "SCS1DryStore",
+    "PCMicroFreeze",
+)
 
 
 class PanasonicFridgeData:
@@ -78,6 +140,37 @@ class PanasonicFridgeData:
             raise ConfigEntryAuthFailed("Panasonic Smart China session expired") from err
         except PanasonicApiError as err:
             raise UpdateFailed(str(err)) from err
+
+    async def async_set_status(self, updates: dict[str, Any]) -> None:
+        """Write a small validated update using the fridge web app payload shape."""
+        unknown_keys = set(updates) - set(FRIDGE_SETTING_PARAMS)
+        if unknown_keys:
+            raise HomeAssistantError(
+                f"Unsupported fridge setting keys: {sorted(unknown_keys)}"
+            )
+
+        current = await self.async_fetch_status()
+        if as_int(current.get("bodyOffline")):
+            raise HomeAssistantError("Fridge body is offline")
+        if as_int(current.get("bodyOperating")):
+            raise HomeAssistantError("Fridge body is operating locally")
+
+        params = {
+            key: updates.get(key, current.get(key, 0))
+            for key in FRIDGE_SETTING_PARAMS
+        }
+        try:
+            await self.client.set_device_status(
+                self.profile,
+                self.usr_id,
+                self.device_id,
+                self.token,
+                params,
+            )
+        except PanasonicApiAuthError as err:
+            raise ConfigEntryAuthFailed("Panasonic Smart China session expired") from err
+        except PanasonicApiError as err:
+            raise HomeAssistantError(str(err)) from err
 
 
 async def async_get_fridge_coordinator(

@@ -10,7 +10,7 @@ def read(path: Path) -> str:
 
 
 def test_fridge_probe_release_metadata_is_bumped():
-    assert '"version": "2.2.0"' in read(DOMAIN / "manifest.json")
+    assert '"version": "2.3.0"' in read(DOMAIN / "manifest.json")
     assert '"name": "Panasonic Smart China"' in read(ROOT / "hacs.json")
 
 
@@ -26,9 +26,13 @@ def test_fridge_probe_platform_is_sensor_only():
     models = read(DOMAIN / "models.py")
     assert 'PLATFORM_SENSOR = "sensor"' in models
     assert 'PLATFORM_BINARY_SENSOR = "binary_sensor"' in models
+    assert 'PLATFORM_SWITCH = "switch"' in models
+    assert 'PLATFORM_NUMBER = "number"' in models
     assert 'ENTITY_KIND_FRIDGE_PROBE = "fridge_probe"' in models
     assert (DOMAIN / "sensor.py").exists()
     assert (DOMAIN / "binary_sensor.py").exists()
+    assert (DOMAIN / "switch.py").exists()
+    assert (DOMAIN / "number.py").exists()
 
 
 def test_fridge_probe_matches_category_and_model():
@@ -36,8 +40,11 @@ def test_fridge_probe_matches_category_and_model():
     assert 'category_ids=frozenset({"0100"})' in profile
     assert 'model_ids=frozenset({"Fridge-43"})' in profile
     assert 'path="FDevGetStatusInfo"' in profile
+    assert 'path="FDevSetStatusInfo"' in profile
     assert "TOKEN_STRATEGY_DEVICE_ID_SHA512_PRESERVE_SUFFIX" in profile
     assert "PLATFORM_BINARY_SENSOR" in profile
+    assert "PLATFORM_SWITCH" in profile
+    assert "PLATFORM_NUMBER" in profile
 
 
 def test_fridge_probe_recomputes_token_from_profile_strategy():
@@ -56,3 +63,21 @@ def test_fridge_read_only_entities_are_declared():
     assert "waterLack" in binary_sensor
     assert "async_get_fridge_coordinator" in sensor
     assert "async_get_fridge_coordinator" in binary_sensor
+
+
+def test_fridge_control_entities_are_declared_safely():
+    switch = read(DOMAIN / "switch.py")
+    number = read(DOMAIN / "number.py")
+    fridge = read(DOMAIN / "fridge.py")
+    assert "FRIDGE_SETTING_PARAMS" in fridge
+    assert "async_set_status" in fridge
+    assert "quickFreeze" in switch
+    assert "autoIcing" in switch
+    assert "freshFrozen" in switch
+    assert "PCTempSet" in number
+    assert "SCS1TempSet" in number
+    assert "FCTempSet" in number
+    assert "native_min_value=2" in number
+    assert "native_max_value=7" in number
+    assert "native_min_value=-23" in number
+    assert "native_max_value=-17" in number

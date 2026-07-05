@@ -5,7 +5,9 @@ from __future__ import annotations
 from ..models import (
     ENTITY_KIND_FRIDGE_PROBE,
     PLATFORM_BINARY_SENSOR,
+    PLATFORM_NUMBER,
     PLATFORM_SENSOR,
+    PLATFORM_SWITCH,
     PROTOCOL_FRIDGE_PROBE,
     TOKEN_STRATEGY_DEVICE_ID_SHA512_PRESERVE_SUFFIX,
     PanasonicEndpoint,
@@ -18,7 +20,7 @@ FRIDGE_0100_FRIDGE_43_PROFILE = PanasonicProfile(
     name="松下冰箱探针 (Fridge-43)",
     category_ids=frozenset({"0100"}),
     model_ids=frozenset({"Fridge-43"}),
-    ha_platforms=(PLATFORM_SENSOR, PLATFORM_BINARY_SENSOR),
+    ha_platforms=(PLATFORM_SENSOR, PLATFORM_BINARY_SENSOR, PLATFORM_SWITCH, PLATFORM_NUMBER),
     entity_kind=ENTITY_KIND_FRIDGE_PROBE,
     protocol=PROTOCOL_FRIDGE_PROBE,
     token_strategy=TOKEN_STRATEGY_DEVICE_ID_SHA512_PRESERVE_SUFFIX,
@@ -28,8 +30,8 @@ FRIDGE_0100_FRIDGE_43_PROFILE = PanasonicProfile(
         require_results=True,
     ),
     set_endpoint=PanasonicEndpoint(
-        path="",
-        request_id=0,
+        path="FDevSetStatusInfo",
+        request_id=200,
         require_results=False,
     ),
 )

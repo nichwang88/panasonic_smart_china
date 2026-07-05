@@ -1,12 +1,12 @@
 # Panasonic Smart China for Home Assistant
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-2.1.0-blue.svg)]()
+[![version](https://img.shields.io/badge/version-2.3.0-blue.svg)]()
 [![license](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
 这是一个用于 Home Assistant 的松下中国区智能家电自定义集成，目标是逐步维护成面向“松下智能家电”中国区设备的核心 HA 集成仓库。
 
-项目当前基于对“松下智能家电”App 通信逻辑的分析实现，非松下官方项目。目前已支持品类代号 `0900` 的松下风管机/中央空调线控设备、品类代号 `0820` 的 `FV-RB20VL1` 风暖浴霸，并加入品类代号 `0100` 的 `Fridge-43` 冰箱只读探针。代码内部采用 profile 驱动模型，后续会通过独立 profile、协议端点和 HA entity adapter 扩展更多品类和设备型号。
+项目当前基于对“松下智能家电”App 通信逻辑的分析实现，非松下官方项目。目前已支持品类代号 `0900` 的松下风管机/中央空调线控设备、品类代号 `0820` 的 `FV-RB20VL1` 风暖浴霸，并加入品类代号 `0100` 的 `Fridge-43` 冰箱状态读取和试验控制。代码内部采用 profile 驱动模型，后续会通过独立 profile、协议端点和 HA entity adapter 扩展更多品类和设备型号。
 
 > 💡 特别致谢：登陆算法由arthurfsy和不知名的逆向大佬提供。
 
@@ -14,13 +14,13 @@
 
 ## 当前状态
 
-2.1 版本在账号级配置模型基础上新增了多品类 profile/adapter 扩展层，并加入风暖浴霸支持。2.1.1 版本新增 `Fridge-43` 冰箱只读探针，用于采集真实状态字段，暂不发送控制指令。2.1.2 版本将冰箱探针状态接口修正为 `FDevGetStatusInfo`，并按冰箱前端逻辑保留 `Fridge-43` 大小写生成 token。2.1.3 版本补充 HACS manifest 以兼容新版本 HACS 的 tag 下载校验。2.2.0 版本将 `Fridge-43` 探针升级为正式只读实体，新增温度、门状态和功能状态实体：
+2.1 版本在账号级配置模型基础上新增了多品类 profile/adapter 扩展层，并加入风暖浴霸支持。2.1.1 版本新增 `Fridge-43` 冰箱只读探针，用于采集真实状态字段，暂不发送控制指令。2.1.2 版本将冰箱探针状态接口修正为 `FDevGetStatusInfo`，并按冰箱前端逻辑保留 `Fridge-43` 大小写生成 token。2.1.3 版本补充 HACS manifest 以兼容新版本 HACS 的 tag 下载校验。2.2.0 版本将 `Fridge-43` 探针升级为正式只读实体，新增温度、门状态和功能状态实体。2.3.0 版本基于冰箱前端 `FDevSetStatusInfo` 逻辑新增试验控制实体：
 
 - 在 HA 中以松下账号为配置入口。
 - 登录后自动扫描账号下可识别的设备。
 - 每个设备会在同一账号配置项下创建对应实体。
 - 当前已注册 `0900` 风管机和 `0820` `FV-RB20VL1` 风暖浴霸 profile。
-- 当前已注册 `0100` `Fridge-43` 冰箱 profile，会在 HA 中创建诊断 sensor、温度 sensor、门状态 binary_sensor 和功能状态 binary_sensor。
+- 当前已注册 `0100` `Fridge-43` 冰箱 profile，会在 HA 中创建诊断 sensor、温度 sensor、门状态 binary_sensor、功能状态 binary_sensor、功能 switch 和设定温度 number。
 - profile 可以声明品类代号、型号匹配、HA 平台、实体 adapter、状态读取接口、控制接口和安全写入字段。
 - 初始化流程只允许选择已支持设备，并会列出因 category 或具体型号不受支持而被过滤的设备。
 - 设备信息会透出设备名称、厂商和型号，便于在 HA 设备页识别。
@@ -47,6 +47,7 @@
 - Read-Modify-Write 控制：发送控制指令前先读取设备当前状态，再只修改必要字段，降低覆盖设备真实状态的风险。
 - 0900 风管机控制：支持开关机、制冷、制热、除湿、自动模式、目标温度和风速控制。
 - FV-RB20VL1 风暖浴霸控制：支持待机、取暖、换气、凉干燥和热干燥模式。
+- Fridge-43 冰箱试验控制：支持冷藏室、冷冻室、变温室设定温度，以及速冻、自动制冰、新鲜冻结、Nanoe、干燥臻藏、-3℃微冻、母乳珍藏开关。
 - 静音风速映射：将松下协议中的静音开关映射为 HA 中的 `Quiet` 风速。
 - 外部温度传感器：可为 climate 实体绑定 HA 中的温度传感器，用于显示更准确的室内温度。
 - 本地品牌图：包含 HA 自定义集成可加载的本地 `brand/icon.png` 和 `brand/logo.png`。
@@ -57,7 +58,7 @@
 | --- | --- | --- | --- |
 | `0900` | 风管机/中央空调 | `ducted_ac_0900` | 以 `CZ-RD501DW2` 线控器逻辑验证 |
 | `0820` | 风暖浴霸 | `bathroom_heater_0820_fv_rb20vl1` | 支持型号 `FV-RB20VL1`，设备 ID 后缀可能显示为 `Aircle-05-02` |
-| `0100` | 冰箱 | `fridge_0100_fridge_43` | 支持型号 `Fridge-43` 的只读状态实体；包含 `raw_status` 探针、温度、门状态和功能状态，暂不支持控制 |
+| `0100` | 冰箱 | `fridge_0100_fridge_43` | 支持型号 `Fridge-43` 的状态读取和试验控制；包含 `raw_status` 探针、温度、门状态、功能状态、功能开关和设定温度 |
 
 其他品类和型号暂未声明支持。即使能在扫描中识别出来，也需要补充 profile/adapter 并完成真实设备验证后再开放。
 
