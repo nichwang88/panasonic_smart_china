@@ -7,6 +7,7 @@ from typing import Any
 
 PLATFORM_CLIMATE = "climate"
 PLATFORM_SENSOR = "sensor"
+PLATFORM_BINARY_SENSOR = "binary_sensor"
 
 ENTITY_KIND_DUCTED_AC = "ducted_ac"
 ENTITY_KIND_BATHROOM_HEATER = "bathroom_heater"
