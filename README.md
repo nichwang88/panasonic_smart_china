@@ -1,7 +1,7 @@
 # Panasonic Smart China for Home Assistant
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-2.3.0-blue.svg)]()
+[![version](https://img.shields.io/badge/version-2.3.1-blue.svg)]()
 [![license](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
 这是一个用于 Home Assistant 的松下中国区智能家电自定义集成，目标是逐步维护成面向“松下智能家电”中国区设备的核心 HA 集成仓库。
@@ -14,7 +14,7 @@
 
 ## 当前状态
 
-2.1 版本在账号级配置模型基础上新增了多品类 profile/adapter 扩展层，并加入风暖浴霸支持。2.1.1 版本新增 `Fridge-43` 冰箱只读探针，用于采集真实状态字段，暂不发送控制指令。2.1.2 版本将冰箱探针状态接口修正为 `FDevGetStatusInfo`，并按冰箱前端逻辑保留 `Fridge-43` 大小写生成 token。2.1.3 版本补充 HACS manifest 以兼容新版本 HACS 的 tag 下载校验。2.2.0 版本将 `Fridge-43` 探针升级为正式只读实体，新增温度、门状态和功能状态实体。2.3.0 版本基于冰箱前端 `FDevSetStatusInfo` 逻辑新增试验控制实体：
+2.1 版本在账号级配置模型基础上新增了多品类 profile/adapter 扩展层，并加入风暖浴霸支持。2.1.1 版本新增 `Fridge-43` 冰箱只读探针，用于采集真实状态字段，暂不发送控制指令。2.1.2 版本将冰箱探针状态接口修正为 `FDevGetStatusInfo`，并按冰箱前端逻辑保留 `Fridge-43` 大小写生成 token。2.1.3 版本补充 HACS manifest 以兼容新版本 HACS 的 tag 下载校验。2.2.0 版本将 `Fridge-43` 探针升级为正式只读实体，新增温度、门状态和功能状态实体。2.3.0 版本基于冰箱前端 `FDevSetStatusInfo` 逻辑新增试验控制实体。2.3.1 版本更新本地品牌图标：
 
 - 在 HA 中以松下账号为配置入口。
 - 登录后自动扫描账号下可识别的设备。

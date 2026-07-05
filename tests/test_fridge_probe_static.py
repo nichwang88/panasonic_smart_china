@@ -10,7 +10,7 @@ def read(path: Path) -> str:
 
 
 def test_fridge_probe_release_metadata_is_bumped():
-    assert '"version": "2.3.0"' in read(DOMAIN / "manifest.json")
+    assert '"version": "2.3.1"' in read(DOMAIN / "manifest.json")
     assert '"name": "Panasonic Smart China"' in read(ROOT / "hacs.json")
 
 
