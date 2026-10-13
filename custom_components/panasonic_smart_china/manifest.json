@@ -1,11 +1,11 @@
 {
   "domain": "panasonic_smart_china",
   "name": "Panasonic Smart China",
-  "documentation": "https://github.com/mcdona1d/panasonic_smart_china",
+  "documentation": "https://github.com/nichwang88/panasonic_smart_china",
   "dependencies": [],
   "codeowners": [],
   "requirements": [],
-  "version": "2.3.1",
+  "version": "2.4.0",
   "iot_class": "cloud_polling",
   "config_flow": true
 }

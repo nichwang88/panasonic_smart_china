@@ -28,6 +28,9 @@ FRIDGE_0100_FRIDGE_43_PROFILE = PanasonicProfile(
         path="FDevGetStatusInfo",
         request_id=100,
         require_results=True,
+        required_result_keys=frozenset({
+            "PCTempSet", "SCS1TempSet", "FCTempSet", "bodyOffline", "bodyOperating",
+        }),
     ),
     set_endpoint=PanasonicEndpoint(
         path="FDevSetStatusInfo",

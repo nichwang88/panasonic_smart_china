@@ -7,7 +7,6 @@ import logging
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import PanasonicApiClient
@@ -21,7 +20,7 @@ from .const import (
     CONF_SSID,
     DOMAIN,
 )
-from .fridge import as_int, async_get_fridge_coordinator, is_on_value
+from .fridge import async_get_fridge_coordinator, is_on_value
 from .models import ENTITY_KIND_FRIDGE_PROBE, PLATFORM_SWITCH
 from .profiles import find_profile_for_device_config
 
@@ -148,15 +147,11 @@ class PanasonicFridgeSwitch(CoordinatorEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         updates = {self.entity_description.key: 1}
-        if self.entity_description.key == "nanoe":
-            scs_temp = as_int((self.coordinator.data or {}).get("SCS1TempSet"))
-            if scs_temp is None or scs_temp <= 0:
-                raise HomeAssistantError("Nanoe can only be enabled above 0℃")
         if self.entity_description.turn_on_updates:
             updates.update(self.entity_description.turn_on_updates)
-        await self.fridge.async_set_status(updates)
-        await self.coordinator.async_request_refresh()
+        confirmed = await self.fridge.async_set_status(updates)
+        self.coordinator.async_set_updated_data(confirmed)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        await self.fridge.async_set_status({self.entity_description.key: 0})
-        await self.coordinator.async_request_refresh()
+        confirmed = await self.fridge.async_set_status({self.entity_description.key: 0})
+        self.coordinator.async_set_updated_data(confirmed)

@@ -138,6 +138,5 @@ class PanasonicFridgeTemperatureNumber(CoordinatorEntity, NumberEntity):
         return as_int((self.coordinator.data or {}).get(self.entity_description.key))
 
     async def async_set_native_value(self, value: float) -> None:
-        set_value = int(value)
-        await self.fridge.async_set_status({self.entity_description.key: set_value})
-        await self.coordinator.async_request_refresh()
+        confirmed = await self.fridge.async_set_status({self.entity_description.key: value})
+        self.coordinator.async_set_updated_data(confirmed)

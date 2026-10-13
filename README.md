@@ -1,7 +1,7 @@
 # Panasonic Smart China for Home Assistant
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-2.3.1-blue.svg)]()
+[![version](https://img.shields.io/badge/version-2.4.0-blue.svg)]()
 [![license](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
 这是一个用于 Home Assistant 的松下中国区智能家电自定义集成，目标是逐步维护成面向“松下智能家电”中国区设备的核心 HA 集成仓库。
@@ -26,6 +26,19 @@
 - 设备信息会透出设备名称、厂商和型号，便于在 HA 设备页识别。
 
 ## 重要升级说明
+
+### 2.4.0 控制可靠性修复
+
+当前源码版本为 `2.4.0`。GitHub Release 和 HACS 可下载版本以 Releases 页面为准。
+
+- 每台冰箱独立串行执行读取、校验、写入和回读确认，防止 HA 并发控制互相覆盖。
+- 写入前要求完整的温区、功能和本体状态；异常数值、只读字段及越界温度会被拒绝。未上报的可选隔室字段不会补成 0。
+- Nanoe 的温度限制使用最新状态及本次目标温度判断；微冻与母乳珍藏在控制入口统一互斥。
+- 写入后最多读取三次确认，后两次各等待一秒。确认失败时报告错误，不自动重发控制指令。回读只能证明云端状态，不等同于实测温度或物理验收。
+- 云 API 使用固定证书指纹校验，替代跳过证书检查。服务端证书轮换时需核实并更新指纹，不会自动降级。
+- 吸收上游账号父设备注册修复，保持现有家电和实体的 identifier。此工作区要求 Home Assistant Core **2026.8.0 或更高**。
+
+已安装 `v2.3.1` 的用户升级到此版本时无需删除集成或实体。下方删除重建流程仅适用于 `1.x` 升级到 `2.x`。
 
 2.0 是一次不兼容升级，不会迁移 1.x 中按单设备创建的旧配置。
 
@@ -125,6 +138,30 @@
 仪表盘配置示例见 [风暖浴霸仪表盘卡片](guides/风暖浴霸仪表盘卡片.md)。
 
 ## 开发方向
+
+### 本地测试与 CI
+
+使用 Python 3.14，在隔离的虚拟环境中运行：
+
+```sh
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements-test.txt
+python -m pytest -q
+python -m compileall -q custom_components
+```
+
+行为测试直接调用集成代码，用内存云端替代网络边界，不使用真实账号、不发送设备指令。GitHub Actions 将在 push、pull request 或手动运行时执行相同检查。
+
+### 云端证书维护
+
+`app.psmartcloud.com` 当前使用自签名 `*.psmartcloud.com` 证书。2026-10-13 从 Mac 与 HA 主机读取的 DER SHA-256 指纹相同：
+
+```text
+a03226da8dd2ef0ea7e390232eed88d27d36c9e1a3208439f20a4c37eec35948
+```
+
+此指纹固定在 `api.py`。请求禁止重定向，证书不匹配会在发送 HTTP 凭据前失败。指纹来自当前连接的人工核对，并非公共 CA 验证；证书变更需核对来源、更新代码并发布，不应关闭校验或自动采纳新指纹。
 
 后续计划围绕三个方向推进：
 

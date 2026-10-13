@@ -1,14 +1,30 @@
 import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 
 from .api import PanasonicApiClient
-from .const import CONF_SSID, DOMAIN
+from .const import CONF_SSID, CONF_USR_ID, DOMAIN
 from .profiles import supported_platforms
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = list(supported_platforms())
+
+def _async_create_account_device(hass: HomeAssistant, entry: ConfigEntry) -> str | None:
+    """Register the account service before its appliance entities."""
+    account_id = entry.unique_id or entry.data.get(CONF_USR_ID)
+    if not account_id:
+        return None
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, str(account_id))},
+        name=entry.title,
+        manufacturer="Panasonic",
+        model="Smart China",
+        entry_type=dr.DeviceEntryType.SERVICE,
+    )
+    return device.id
 
 async def async_setup(hass: HomeAssistant, config: dict):
     hass.data.setdefault(DOMAIN, {})
@@ -16,8 +32,10 @@ async def async_setup(hass: HomeAssistant, config: dict):
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     hass.data.setdefault(DOMAIN, {})
+    account_device_id = _async_create_account_device(hass, entry)
     hass.data[DOMAIN][entry.entry_id] = {
         "client": PanasonicApiClient(hass, entry.data.get(CONF_SSID)),
+        "account_device_id": account_device_id,
     }
     
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import hashlib
 from typing import Any
 
-import async_timeout
+from aiohttp import Fingerprint
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -19,6 +20,13 @@ URL_GET_TOKEN = f"{BASE_URL}/UsrGetToken"
 
 AUTH_ERROR_CODES = {"3003", "3004", "403", "4102"}
 SUCCESS_ERROR_CODES = {None, "", 0, "0", "0000"}
+
+# Panasonic serves a self-signed *.psmartcloud.com certificate. Pin its
+# SHA-256 DER fingerprint instead of accepting arbitrary certificates.
+# Verified from the Mac and HA host on 2026-10-13. Rotation requires review.
+TLS_FINGERPRINT = Fingerprint(bytes.fromhex(
+    "a03226da8dd2ef0ea7e390232eed88d27d36c9e1a3208439f20a4c37eec35948"
+))
 
 
 class PanasonicApiError(Exception):
@@ -196,28 +204,33 @@ class PanasonicApiClient:
     ) -> dict[str, Any]:
         session = async_get_clientsession(self._hass)
         try:
-            async with async_timeout.timeout(10):
-                response = await session.post(url, json=payload, headers=headers, ssl=False)
-                if response.status != 200:
-                    text = await response.text()
-                    raise PanasonicApiResponseError(
-                        f"HTTP {response.status} from {url}: {text[:200]}"
-                    )
+            async with asyncio.timeout(10):
+                async with session.post(
+                    url, json=payload, headers=headers,
+                    ssl=TLS_FINGERPRINT, allow_redirects=False,
+                ) as response:
+                    if response.status in (401, 403):
+                        raise PanasonicApiAuthError(f"Panasonic session expired (HTTP {response.status})")
+                    if response.status != 200:
+                        text = await response.text()
+                        raise PanasonicApiResponseError(
+                            f"HTTP {response.status} from {url}: {text[:200]}"
+                        )
 
-                try:
-                    data = await response.json()
-                except Exception as err:
-                    text = await response.text()
-                    if allow_non_json_response:
-                        for auth_code in AUTH_ERROR_CODES:
-                            if auth_code in text:
-                                raise PanasonicApiAuthError(
-                                    f"Panasonic session expired (errorCode: {auth_code})"
-                                ) from err
-                        return {}
-                    raise PanasonicApiResponseError(
-                        f"Invalid JSON from {url}: {text[:200]}"
-                    ) from err
+                    try:
+                        data = await response.json()
+                    except Exception as err:
+                        text = await response.text()
+                        if allow_non_json_response:
+                            for auth_code in AUTH_ERROR_CODES:
+                                if auth_code in text:
+                                    raise PanasonicApiAuthError(
+                                        f"Panasonic session expired (errorCode: {auth_code})"
+                                    ) from err
+                            return {}
+                        raise PanasonicApiResponseError(
+                            f"Invalid JSON from {url}: {text[:200]}"
+                        ) from err
         except PanasonicApiError:
             raise
         except TimeoutError as err:

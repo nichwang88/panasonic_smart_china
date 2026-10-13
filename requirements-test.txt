@@ -1,0 +1,3 @@
+# CI baseline; production dependencies are provided by Home Assistant.
+homeassistant==2026.10.1
+pytest==9.1.1
