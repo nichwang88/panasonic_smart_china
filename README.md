@@ -1,7 +1,7 @@
 # Panasonic Smart China for Home Assistant
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-2.4.0-blue.svg)]()
+[![version](https://img.shields.io/badge/version-2.4.1-blue.svg)]()
 [![license](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
 这是一个用于 Home Assistant 的松下中国区智能家电自定义集成，目标是逐步维护成面向“松下智能家电”中国区设备的核心 HA 集成仓库。
@@ -27,9 +27,16 @@
 
 ## 重要升级说明
 
+### 2.4.1 Home Assistant 2026.11 兼容修复
+
+- 冰箱的首次云端读取在账号集成启动阶段完成，再加载各实体平台；读取失败时由 HA 重试账号集成，避免门状态平台永久停留在加载失败状态。
+- 各平台复用首次读取结果，保留原有设备和实体标识、控制校验及回读确认。
+- 空调和浴霸使用新的 `native_*` 温度属性，同时保留旧版 HA 的属性适配。
+- 回归测试基线更新到 Home Assistant 2026.11.0；测试使用隔离的云 API，不访问真实家电。
+
 ### 2.4.0 控制可靠性修复
 
-当前源码版本为 `2.4.0`。GitHub Release 和 HACS 可下载版本以 Releases 页面为准。
+当前源码版本为 `2.4.1`。GitHub Release 和 HACS 可下载版本以 Releases 页面为准。
 
 - 每台冰箱独立串行执行读取、校验、写入和回读确认，防止 HA 并发控制互相覆盖。
 - 写入前要求完整的温区、功能和本体状态；异常数值、只读字段及越界温度会被拒绝。未上报的可选隔室字段不会补成 0。

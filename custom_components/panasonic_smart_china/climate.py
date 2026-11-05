@@ -186,7 +186,7 @@ class PanasonicBaseEntity(ClimateEntity):
     # --- 通用属性 ---
 
     @property
-    def temperature_unit(self):
+    def native_temperature_unit(self):
         return UnitOfTemperature.CELSIUS
 
     @property
@@ -214,8 +214,12 @@ class PanasonicBaseEntity(ClimateEntity):
         return self._hvac_mode
 
     @property
-    def target_temperature(self):
+    def native_target_temperature(self):
         return self._target_temperature
+
+    if not hasattr(ClimateEntity, "native_temperature_unit"):
+        temperature_unit = native_temperature_unit
+        target_temperature = native_target_temperature
 
     # --- 状态获取 ---
 
@@ -367,7 +371,7 @@ class PanasonicACEntity(PanasonicBaseEntity):
         return self._fan_mode
 
     @property
-    def current_temperature(self):
+    def native_current_temperature(self):
         if not self._sensor_id:
             return None
         state = self._hass.states.get(self._sensor_id)
@@ -377,6 +381,9 @@ class PanasonicACEntity(PanasonicBaseEntity):
             except ValueError:
                 pass
         return None
+
+    if not hasattr(ClimateEntity, "native_current_temperature"):
+        current_temperature = native_current_temperature
 
     def _update_local_state(self, res):
         self._is_on = (_as_int(res.get('runStatus')) == 1)
@@ -471,12 +478,16 @@ class PanasonicBathroomHeaterEntity(PanasonicBaseEntity):
         return ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
 
     @property
-    def current_temperature(self):
+    def native_current_temperature(self):
         return None
 
     @property
-    def target_temperature(self):
+    def native_target_temperature(self):
         return None
+
+    if not hasattr(ClimateEntity, "native_temperature_unit"):
+        current_temperature = native_current_temperature
+        target_temperature = native_target_temperature
 
     def _update_local_state(self, res):
         mode_value = _as_int(res.get("runningMode"), 32)
